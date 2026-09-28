@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: challango_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-challan_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-challan_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-challan_db}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - challango_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-challan_admin} -d ${POSTGRES_DB:-challan_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  challango_pgdata:
+    name: challango_pgdata

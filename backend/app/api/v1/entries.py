@@ -1,0 +1,617 @@
+import math
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.vehicle import normalize_vehicle_no, validate_indian_vehicle_format
+from app.models.user import User
+from app.models.entry import Entry
+from app.models.audit_log import AuditAction
+from app.schemas.entry import (
+    EntryCreate,
+    EntryUpdate,
+    EntryResponse,
+    EntryListResponse,
+    EntrySummaryResponse,
+)
+from app.api.deps import get_current_user, require_admin
+from app.services.entry_service import build_entries_filter_query, log_entry_audit
+from app.services.export_service import generate_xlsx_export, generate_csv_export
+from app.schemas.import_schema import (
+    ImportPreviewResponse,
+    ImportCommitRequest,
+    ImportCommitResponse,
+)
+from app.services.import_service import (
+    generate_import_template,
+    parse_and_preview_import,
+    commit_import,
+)
+
+router = APIRouter(prefix="/entries", tags=["Entries"])
+
+
+def _to_entry_response(entry: Entry, warning: Optional[str] = None) -> EntryResponse:
+    """Helper to convert Entry model into EntryResponse with vehicle warning check."""
+    if warning is None:
+        _, warning = validate_indian_vehicle_format(entry.vehicle_no)
+    resp = EntryResponse.model_validate(entry)
+    resp.warning = warning
+    return resp
+
+
+@router.post("", response_model=EntryResponse, status_code=status.HTTP_201_CREATED)
+def create_entry(
+    entry_in: EntryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create a new challan delivery entry.
+    - Recomputes total_price server-side (quantity * unit_price).
+    - Normalizes vehicle number (uppercase, strips spaces and hyphens).
+    - Returns warning if vehicle number format is unusual (does not reject).
+    - Enforces uniqueness on (challan_no, serial_no) among active entries (409 Conflict).
+    - Records audit log.
+    """
+    # Explicit validation safeguards for exact field naming
+    if entry_in.quantity <= Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'quantity' must be greater than 0",
+        )
+    if entry_in.unit_price < Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'unit_price' must be greater than or equal to 0",
+        )
+
+    serial_no = entry_in.serial_no.strip()
+    challan_no = entry_in.challan_no.strip()
+    product = entry_in.product.strip()
+
+    # Normalize vehicle number
+    normalized_vehicle = normalize_vehicle_no(entry_in.vehicle_no)
+    _, vehicle_warning = validate_indian_vehicle_format(normalized_vehicle)
+
+    # Check active duplicate collision
+    existing = (
+        db.query(Entry)
+        .filter(
+            Entry.challan_no == challan_no,
+            Entry.serial_no == serial_no,
+            Entry.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An active entry with Challan No '{challan_no}' and Serial No '{serial_no}' already exists",
+        )
+
+    # Server-side calculation of total_price (ignoring any client sent value)
+    server_total_price = (entry_in.quantity * entry_in.unit_price).quantize(Decimal("0.01"))
+
+    now = datetime.now(timezone.utc)
+    new_entry = Entry(
+        serial_no=serial_no,
+        challan_no=challan_no,
+        vehicle_no=normalized_vehicle,
+        product=product,
+        destination=entry_in.destination.strip(),
+        destination_lat=entry_in.destination_lat,
+        destination_lng=entry_in.destination_lng,
+        quantity=entry_in.quantity,
+        unit_price=entry_in.unit_price,
+        total_price=server_total_price,
+        created_at=now,
+        updated_at=now,
+        created_by=current_user.id,
+        updated_by=current_user.id,
+        is_deleted=False,
+    )
+
+    try:
+        db.add(new_entry)
+        db.flush()
+
+        # Audit log
+        log_entry_audit(
+            db=db,
+            user_id=current_user.id,
+            action=AuditAction.CREATE,
+            entry_id=new_entry.id,
+            details={
+                "challan_no": new_entry.challan_no,
+                "serial_no": new_entry.serial_no,
+                "vehicle_no": new_entry.vehicle_no,
+                "product": new_entry.product,
+                "destination": new_entry.destination,
+                "quantity": str(new_entry.quantity),
+                "unit_price": str(new_entry.unit_price),
+                "total_price": str(new_entry.total_price),
+            },
+        )
+        db.commit()
+        db.refresh(new_entry)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An active entry with Challan No '{challan_no}' and Serial No '{serial_no}' already exists",
+        )
+
+    return _to_entry_response(new_entry, vehicle_warning)
+
+
+@router.get("/summary", response_model=EntrySummaryResponse)
+def get_entries_summary(
+    q: Optional[str] = Query(None, description="Multi-column search query"),
+    date_from: Optional[str] = Query(None, description="Filter created_at from date (YYYY-MM-DD or ISO)"),
+    date_to: Optional[str] = Query(None, description="Filter created_at to date (YYYY-MM-DD or ISO)"),
+    product: Optional[str] = Query(None, description="Filter by product name"),
+    destination: Optional[str] = Query(None, description="Filter by destination"),
+    vehicle_no: Optional[str] = Query(None, description="Filter by vehicle registration number"),
+    challan_no: Optional[str] = Query(None, description="Filter by challan number"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get aggregated count and sums for the current search and filter criteria.
+    Powers the UI summary bar using the exact same filters as the list endpoint.
+    """
+    query = build_entries_filter_query(
+        db=db,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        product=product,
+        destination=destination,
+        vehicle_no=vehicle_no,
+        challan_no=challan_no,
+    )
+
+    count, sum_price, sum_qty = (
+        query.with_entities(
+            func.count(Entry.id),
+            func.coalesce(func.sum(Entry.total_price), 0),
+            func.coalesce(func.sum(Entry.quantity), 0),
+        ).one()
+    )
+
+    return EntrySummaryResponse(
+        count=count,
+        sum_total_price=Decimal(str(sum_price)).quantize(Decimal("0.01")),
+        sum_quantity=Decimal(str(sum_qty)).quantize(Decimal("0.01")),
+    )
+
+
+@router.get("", response_model=EntryListResponse)
+def list_entries(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(25, ge=1, le=200, description="Items per page"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_dir: str = Query("desc", description="Sort direction (asc or desc)"),
+    q: Optional[str] = Query(None, description="Search across challan_no, serial_no, vehicle_no, product, destination"),
+    date_from: Optional[str] = Query(None, description="Filter created_at from date"),
+    date_to: Optional[str] = Query(None, description="Filter created_at to date"),
+    product: Optional[str] = Query(None, description="Filter by product name"),
+    destination: Optional[str] = Query(None, description="Filter by destination"),
+    vehicle_no: Optional[str] = Query(None, description="Filter by vehicle registration number"),
+    challan_no: Optional[str] = Query(None, description="Filter by challan number"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retrieve paginated list of challan entries with search, filters, and sorting.
+    Excludes soft-deleted entries.
+    """
+    query = build_entries_filter_query(
+        db=db,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        product=product,
+        destination=destination,
+        vehicle_no=vehicle_no,
+        challan_no=challan_no,
+    )
+
+    total_count = query.count()
+
+    # Sort validation and application
+    allowed_sort_fields = {
+        "created_at": Entry.created_at,
+        "challan_no": Entry.challan_no,
+        "vehicle_no": Entry.vehicle_no,
+        "product": Entry.product,
+        "destination": Entry.destination,
+        "total_price": Entry.total_price,
+        "quantity": Entry.quantity,
+        "unit_price": Entry.unit_price,
+    }
+    sort_col = allowed_sort_fields.get(sort_by, Entry.created_at)
+    order_clause = sort_col.asc() if sort_dir.lower() == "asc" else sort_col.desc()
+    query = query.order_by(order_clause)
+
+    offset = (page - 1) * page_size
+    entries = query.offset(offset).limit(page_size).all()
+    total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
+
+    items = [_to_entry_response(e) for e in entries]
+
+    return EntryListResponse(
+        items=items,
+        total_count=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/export")
+def export_entries(
+    format: str = Query("xlsx", description="Export format: 'xlsx' or 'csv'"),
+    q: Optional[str] = Query(None, description="Search across challan_no, serial_no, vehicle_no, product, destination"),
+    date_from: Optional[str] = Query(None, description="Filter created_at from date"),
+    date_to: Optional[str] = Query(None, description="Filter created_at to date"),
+    product: Optional[str] = Query(None, description="Filter by product name"),
+    destination: Optional[str] = Query(None, description="Filter by destination"),
+    vehicle_no: Optional[str] = Query(None, description="Filter by vehicle registration number"),
+    challan_no: Optional[str] = Query(None, description="Filter by challan number"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_dir: str = Query("desc", description="Sort direction (asc or desc)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Export matching entries to formatted Excel (.xlsx) or CSV (.csv).
+    Applies the same search and filters as the list endpoint without pagination.
+    Guards against formula injection and streams file download.
+    """
+    export_format = format.lower().strip()
+    if export_format not in ("xlsx", "csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid export format '{format}'. Supported formats are 'xlsx' and 'csv'",
+        )
+
+    # Reuse the exact same filter building query
+    query = build_entries_filter_query(
+        db=db,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        product=product,
+        destination=destination,
+        vehicle_no=vehicle_no,
+        challan_no=challan_no,
+    )
+
+    # Apply sorting
+    allowed_sort_fields = {
+        "created_at": Entry.created_at,
+        "challan_no": Entry.challan_no,
+        "vehicle_no": Entry.vehicle_no,
+        "product": Entry.product,
+        "destination": Entry.destination,
+        "total_price": Entry.total_price,
+        "quantity": Entry.quantity,
+        "unit_price": Entry.unit_price,
+    }
+    sort_col = allowed_sort_fields.get(sort_by, Entry.created_at)
+    order_clause = sort_col.asc() if sort_dir.lower() == "asc" else sort_col.desc()
+    entries = query.order_by(order_clause).all()
+
+    # Log export action in audit_log
+    log_entry_audit(
+        db=db,
+        user_id=current_user.id,
+        action=AuditAction.EXPORT,
+        entry_id=None,
+        details={
+            "format": export_format,
+            "filters": {
+                "q": q,
+                "date_from": date_from,
+                "date_to": date_to,
+                "product": product,
+                "destination": destination,
+                "vehicle_no": vehicle_no,
+                "challan_no": challan_no,
+                "sort_by": sort_by,
+                "sort_dir": sort_dir,
+            },
+        },
+    )
+    db.commit()
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"entries_export_{today_str}.{export_format}"
+
+    if export_format == "xlsx":
+        stream = generate_xlsx_export(entries)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        stream = generate_csv_export(entries)
+        media_type = "text/csv; charset=utf-8"
+
+    return StreamingResponse(
+        stream,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
+@router.get("/import/template")
+def download_import_template(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Download a blank Excel template (.xlsx) with exact required column headers
+    and an italicized example row.
+    """
+    stream = generate_import_template()
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="challan_import_template.xlsx"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
+@router.post("/import/preview", response_model=ImportPreviewResponse)
+async def preview_entries_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload and validate an Excel or CSV file.
+    Performs full per-row validation, vehicle normalization, duplicate checks,
+    and returns a preview with error/warning counts.
+    Saves NOTHING to the database at this step.
+    """
+    filename = file.filename or "uploaded_file.xlsx"
+    ext = filename.lower().split(".")[-1] if "." in filename else ""
+    if ext not in ("xlsx", "csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Only .xlsx and .csv files are supported",
+        )
+
+    # 10 MB size limit
+    MAX_SIZE = 10 * 1024 * 1024
+    file_bytes = await file.read(MAX_SIZE + 1)
+    if len(file_bytes) > MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds maximum allowed limit of 10 MB",
+        )
+
+    return parse_and_preview_import(
+        file_bytes=file_bytes,
+        filename=filename,
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.post("/import/commit", response_model=ImportCommitResponse)
+def commit_entries_import(
+    request: ImportCommitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Commit a previously validated import preview into the database.
+    Applies the chosen duplicate strategy ('skip' or 'update') in a single atomic transaction.
+    """
+    return commit_import(
+        preview_id=request.preview_id,
+        duplicate_strategy=request.duplicate_strategy,
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/{entry_id}", response_model=EntryResponse)
+def get_entry(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get a single entry by ID.
+    Returns 404 if entry does not exist or has been soft-deleted.
+    """
+    entry = db.query(Entry).filter(Entry.id == entry_id, Entry.is_deleted.is_(False)).first()
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entry not found",
+        )
+    return _to_entry_response(entry)
+
+
+@router.patch("/{entry_id}", response_model=EntryResponse)
+def update_entry(
+    entry_id: int,
+    entry_in: EntryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Partially update an entry.
+    - Recomputes total_price if quantity or unit_price changes.
+    - Re-validates unique constraint if challan_no or serial_no changes.
+    - Logs changed fields (old vs new values) in audit_log.
+    """
+    entry = db.query(Entry).filter(Entry.id == entry_id, Entry.is_deleted.is_(False)).first()
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entry not found",
+        )
+
+    # Check field validations if provided
+    if entry_in.quantity is not None and entry_in.quantity <= Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'quantity' must be greater than 0",
+        )
+    if entry_in.unit_price is not None and entry_in.unit_price < Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'unit_price' must be greater than or equal to 0",
+        )
+
+    # Determine new candidate values
+    new_serial_no = entry_in.serial_no.strip() if entry_in.serial_no is not None else entry.serial_no
+    new_challan_no = entry_in.challan_no.strip() if entry_in.challan_no is not None else entry.challan_no
+
+    # Check collision if challan_no or serial_no changed
+    if new_serial_no != entry.serial_no or new_challan_no != entry.challan_no:
+        collision = (
+            db.query(Entry)
+            .filter(
+                Entry.id != entry.id,
+                Entry.challan_no == new_challan_no,
+                Entry.serial_no == new_serial_no,
+                Entry.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if collision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An active entry with Challan No '{new_challan_no}' and Serial No '{new_serial_no}' already exists",
+            )
+
+    changed_fields = {}
+
+    if entry_in.serial_no is not None and entry.serial_no != new_serial_no:
+        changed_fields["serial_no"] = {"old": entry.serial_no, "new": new_serial_no}
+        entry.serial_no = new_serial_no
+
+    if entry_in.challan_no is not None and entry.challan_no != new_challan_no:
+        changed_fields["challan_no"] = {"old": entry.challan_no, "new": new_challan_no}
+        entry.challan_no = new_challan_no
+
+    if entry_in.vehicle_no is not None:
+        norm_v = normalize_vehicle_no(entry_in.vehicle_no)
+        if entry.vehicle_no != norm_v:
+            changed_fields["vehicle_no"] = {"old": entry.vehicle_no, "new": norm_v}
+            entry.vehicle_no = norm_v
+
+    if entry_in.product is not None and entry.product != entry_in.product.strip():
+        new_prod = entry_in.product.strip()
+        changed_fields["product"] = {"old": entry.product, "new": new_prod}
+        entry.product = new_prod
+
+    if entry_in.destination is not None and entry.destination != entry_in.destination.strip():
+        new_dest = entry_in.destination.strip()
+        changed_fields["destination"] = {"old": entry.destination, "new": new_dest}
+        entry.destination = new_dest
+
+    if entry_in.destination_lat is not None:
+        entry.destination_lat = entry_in.destination_lat
+
+    if entry_in.destination_lng is not None:
+        entry.destination_lng = entry_in.destination_lng
+
+    # Recalculate price if quantity or unit_price changed
+    price_changed = False
+    new_qty = entry_in.quantity if entry_in.quantity is not None else entry.quantity
+    new_unit_p = entry_in.unit_price if entry_in.unit_price is not None else entry.unit_price
+
+    if entry_in.quantity is not None and entry.quantity != new_qty:
+        changed_fields["quantity"] = {"old": str(entry.quantity), "new": str(new_qty)}
+        entry.quantity = new_qty
+        price_changed = True
+
+    if entry_in.unit_price is not None and entry.unit_price != new_unit_p:
+        changed_fields["unit_price"] = {"old": str(entry.unit_price), "new": str(new_unit_p)}
+        entry.unit_price = new_unit_p
+        price_changed = True
+
+    if price_changed:
+        old_total = entry.total_price
+        new_total = (new_qty * new_unit_p).quantize(Decimal("0.01"))
+        entry.total_price = new_total
+        changed_fields["total_price"] = {"old": str(old_total), "new": str(new_total)}
+
+    entry.updated_by = current_user.id
+    entry.updated_at = datetime.now(timezone.utc)
+
+    if changed_fields:
+        log_entry_audit(
+            db=db,
+            user_id=current_user.id,
+            action=AuditAction.UPDATE,
+            entry_id=entry.id,
+            details={"changed_fields": changed_fields},
+        )
+
+    try:
+        db.commit()
+        db.refresh(entry)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An active entry with Challan No '{new_challan_no}' and Serial No '{new_serial_no}' already exists",
+        )
+
+    _, warning = validate_indian_vehicle_format(entry.vehicle_no)
+    return _to_entry_response(entry, warning)
+
+
+@router.delete("/{entry_id}", status_code=status.HTTP_200_OK)
+def delete_entry(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin),
+):
+    """
+    Soft-delete an entry (Admin only).
+    Sets is_deleted = True, never physically removes the database row.
+    """
+    entry = db.query(Entry).filter(Entry.id == entry_id, Entry.is_deleted.is_(False)).first()
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entry not found",
+        )
+
+    entry.is_deleted = True
+    entry.updated_by = current_admin.id
+    entry.updated_at = datetime.now(timezone.utc)
+
+    log_entry_audit(
+        db=db,
+        user_id=current_admin.id,
+        action=AuditAction.DELETE,
+        entry_id=entry.id,
+        details={
+            "challan_no": entry.challan_no,
+            "serial_no": entry.serial_no,
+            "message": "Soft deleted entry",
+        },
+    )
+
+    db.commit()
+    return {"detail": "Entry successfully deleted", "id": entry_id}

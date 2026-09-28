@@ -1,0 +1,121 @@
+from datetime import datetime
+from decimal import Decimal
+from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
+
+
+class EntryBase(BaseModel):
+    serial_no: str
+    challan_no: str
+    vehicle_no: str
+    product: str
+    destination: str
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    quantity: Decimal
+    unit_price: Decimal
+    total_price: Optional[Decimal] = None  # Ignored if passed; recomputed on server
+
+
+class EntryCreate(BaseModel):
+    serial_no: str
+    challan_no: str
+    vehicle_no: str
+    product: str
+    destination: str
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    quantity: Decimal
+    unit_price: Decimal
+    total_price: Optional[Decimal] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity_field(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("Field 'quantity' must be greater than 0")
+        return v
+
+    @field_validator("unit_price")
+    @classmethod
+    def validate_unit_price_field(cls, v: Decimal) -> Decimal:
+        if v < Decimal("0"):
+            raise ValueError("Field 'unit_price' must be greater than or equal to 0")
+        return v
+
+    @field_validator("serial_no", "challan_no", "vehicle_no", "product", "destination")
+    @classmethod
+    def validate_non_empty_strings(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(f"Field '{info.field_name}' is required and cannot be blank")
+        return v.strip()
+
+
+class EntryUpdate(BaseModel):
+    serial_no: Optional[str] = None
+    challan_no: Optional[str] = None
+    vehicle_no: Optional[str] = None
+    product: Optional[str] = None
+    destination: Optional[str] = None
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None  # Ignored if passed; recomputed on server
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity_update(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is not None and v <= Decimal("0"):
+            raise ValueError("Field 'quantity' must be greater than 0")
+        return v
+
+    @field_validator("unit_price")
+    @classmethod
+    def validate_unit_price_update(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is not None and v < Decimal("0"):
+            raise ValueError("Field 'unit_price' must be greater than or equal to 0")
+        return v
+
+    @field_validator("serial_no", "challan_no", "vehicle_no", "product", "destination")
+    @classmethod
+    def validate_optional_strings(cls, v: Optional[str], info) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError(f"Field '{info.field_name}' cannot be empty")
+        return v.strip() if v is not None else None
+
+
+class EntryResponse(BaseModel):
+    id: int
+    serial_no: str
+    challan_no: str
+    vehicle_no: str
+    product: str
+    destination: str
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    quantity: Decimal
+    unit_price: Decimal
+    total_price: Decimal
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[int] = None
+    updated_by: Optional[int] = None
+    warning: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EntryListResponse(BaseModel):
+    items: List[EntryResponse]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class EntrySummaryResponse(BaseModel):
+    count: int
+    sum_total_price: Decimal
+    sum_quantity: Decimal

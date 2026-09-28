@@ -1,0 +1,218 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DESIGN TOKENS
+   Defined here as CSS custom properties so every component
+   can reference them via var(--c-*) without hardcoding hex.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top:    env(safe-area-inset-top, 0px);
+
+  /* Light mode tokens (default) */
+  --c-bg:              #F8FAFC;
+  --c-surface:         #FFFFFF;
+  --c-surface-raised:  #F1F5F9;
+  --c-text-primary:    #0F172A;
+  --c-text-secondary:  #64748B;
+  --c-text-muted:      #94A3B8;
+  --c-border:          #E2E8F0;
+  --c-border-strong:   #CBD5E1;
+
+  /* Accent — never changes between modes */
+  --c-accent:          #2563EB;
+  --c-accent-hover:    #1D4ED8;
+  --c-accent-surface:  #EFF6FF;  /* light blue tint for cards */
+  --c-accent-border:   #BFDBFE;
+
+  /* Status colors — same in both modes */
+  --c-green:           #16A34A;
+  --c-green-surface:   #F0FDF4;
+  --c-red:             #DC2626;
+  --c-red-surface:     #FEF2F2;
+  --c-yellow:          #D97706;
+  --c-yellow-surface:  #FFFBEB;
+  --c-purple:          #7C3AED;
+  --c-purple-surface:  #F5F3FF;
+  --c-teal:            #0D9488;
+  --c-teal-surface:    #F0FDFA;
+}
+
+/* ── TRUE BLACK dark mode ─────────────────────────────────── */
+[data-mantine-color-scheme="dark"] {
+  --c-bg:              #000000;
+  --c-surface:         #111111;
+  --c-surface-raised:  #1A1A1A;
+  --c-text-primary:    #FFFFFF;
+  --c-text-secondary:  #A0A0A0;
+  --c-text-muted:      #606060;
+  --c-border:          rgba(255, 255, 255, 0.09);
+  --c-border-strong:   rgba(255, 255, 255, 0.16);
+
+  /* Accent stays exactly the same — pops on black */
+  --c-accent:          #2563EB;
+  --c-accent-hover:    #3B82F6;
+  --c-accent-surface:  rgba(37, 99, 235, 0.15);
+  --c-accent-border:   rgba(37, 99, 235, 0.4);
+
+  /* Status surfaces are darkened for black bg */
+  --c-green-surface:   rgba(22, 163, 74, 0.12);
+  --c-red-surface:     rgba(220, 38, 38, 0.12);
+  --c-yellow-surface:  rgba(217, 119, 6, 0.12);
+  --c-purple-surface:  rgba(124, 58, 237, 0.12);
+  --c-teal-surface:    rgba(13, 148, 136, 0.12);
+}
+
+/* Apply tokens to body */
+[data-mantine-color-scheme="dark"] body {
+  background-color: var(--c-bg);
+  color: var(--c-text-primary);
+}
+
+[data-mantine-color-scheme="light"] body {
+  background-color: var(--c-bg);
+  color: var(--c-text-primary);
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Touch tap feedback */
+.mobile-tap-active:active {
+  transform: scale(0.98);
+  transition: transform 0.1s ease;
+}
+
+/* Hide scrollbar for horizontal stat strips */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Mantine component overrides for dark mode ──────────────
+   These patch Mantine components that ignore our custom
+   CSS vars and still render with their own dark-gray defaults.
+   ─────────────────────────────────────────────────────────── */
+
+/* AppShell main area */
+[data-mantine-color-scheme="dark"] .mantine-AppShell-main {
+  background-color: var(--c-bg) !important;
+}
+
+/* AppShell header */
+[data-mantine-color-scheme="dark"] .mantine-AppShell-header {
+  background-color: var(--c-surface) !important;
+  border-bottom-color: var(--c-border) !important;
+}
+
+/* Paper / Card backgrounds */
+[data-mantine-color-scheme="dark"] .mantine-Paper-root,
+[data-mantine-color-scheme="dark"] .mantine-Card-root {
+  background-color: var(--c-surface) !important;
+  border-color: var(--c-border) !important;
+}
+
+/* Modal background */
+[data-mantine-color-scheme="dark"] .mantine-Modal-content {
+  background-color: var(--c-surface) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Modal-header {
+  background-color: var(--c-surface) !important;
+  border-bottom: 1px solid var(--c-border);
+}
+
+/* Drawer */
+[data-mantine-color-scheme="dark"] .mantine-Drawer-content {
+  background-color: var(--c-surface) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Drawer-header {
+  background-color: var(--c-surface) !important;
+}
+
+/* Input backgrounds */
+[data-mantine-color-scheme="dark"] .mantine-Input-input {
+  background-color: var(--c-surface-raised) !important;
+  border-color: var(--c-border-strong) !important;
+  color: var(--c-text-primary) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Input-input::placeholder {
+  color: var(--c-text-muted) !important;
+}
+
+/* Select / Autocomplete dropdown */
+[data-mantine-color-scheme="dark"] .mantine-Combobox-dropdown {
+  background-color: var(--c-surface-raised) !important;
+  border-color: var(--c-border-strong) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Combobox-option:hover,
+[data-mantine-color-scheme="dark"] .mantine-Combobox-option[data-combobox-selected] {
+  background-color: var(--c-accent-surface) !important;
+}
+
+/* Table stripes */
+[data-mantine-color-scheme="dark"] .mantine-Table-tr[data-striped] {
+  background-color: rgba(255,255,255,0.025) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Table-thead {
+  background-color: var(--c-surface-raised) !important;
+}
+
+/* SegmentedControl */
+[data-mantine-color-scheme="dark"] .mantine-SegmentedControl-root {
+  background-color: var(--c-surface-raised) !important;
+  border: 1px solid var(--c-border) !important;
+}
+
+/* Tooltip */
+[data-mantine-color-scheme="dark"] .mantine-Tooltip-tooltip {
+  background-color: var(--c-surface-raised) !important;
+  color: var(--c-text-primary) !important;
+  border: 1px solid var(--c-border);
+}
+
+/* DatePicker popover */
+[data-mantine-color-scheme="dark"] .mantine-DatePicker-calendarHeader,
+[data-mantine-color-scheme="dark"] .mantine-MonthPicker-monthsList,
+[data-mantine-color-scheme="dark"] .mantine-YearPicker-yearsList {
+  background-color: var(--c-surface-raised) !important;
+}
+
+/* Skeleton shimmer in dark */
+[data-mantine-color-scheme="dark"] .mantine-Skeleton-root {
+  background-color: var(--c-surface-raised) !important;
+}
+[data-mantine-color-scheme="dark"] .mantine-Skeleton-root::after {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent) !important;
+}
+
+/* Code block (audit log details) */
+[data-mantine-color-scheme="dark"] .mantine-Code-root {
+  background-color: #0A0A0A !important;
+  color: var(--c-text-primary) !important;
+  border: 1px solid var(--c-border);
+}
+
+/* Notification */
+[data-mantine-color-scheme="dark"] .mantine-Notification-root {
+  background-color: var(--c-surface-raised) !important;
+  border-color: var(--c-border) !important;
+}
