@@ -116,7 +116,6 @@ def test_soft_deleting_product_leaves_entries_unaffected(client, admin_headers, 
     e_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": challan,
             "vehicle_no": "MH01AB1111",
             "product": prod_name,
@@ -148,7 +147,6 @@ def test_entry_created_with_custom_product_not_in_catalog(client, staff_headers)
     response = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": f"CH-CUST-{u}",
             "vehicle_no": "KA02CD2222",
             "product": custom_product,

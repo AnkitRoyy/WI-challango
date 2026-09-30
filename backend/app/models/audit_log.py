@@ -12,6 +12,11 @@ class AuditAction(str, enum.Enum):
     DELETE = "delete"
     IMPORT = "import"
     EXPORT = "export"
+    SHARE = "share_challan"
+    LOGIN = "login"
+    CREATE_USER = "create_user"
+    DEACTIVATE_USER = "deactivate_user"
+    DELETE_USER = "delete_user"
 
 
 class AuditLog(Base):

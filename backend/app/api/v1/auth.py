@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import verify_password, create_access_token
 from app.models.user import User
+from app.models.audit_log import AuditLog
 from app.schemas.user import LoginRequest, TokenResponse, UserResponse
 from app.api.deps import get_current_user
 
@@ -84,6 +85,18 @@ def login(
     # Login succeeded
     _clear_failed_attempts(email)
     logger.info(f"Successful login for user: {user.email} (Role: {user.role})")
+
+    # Audit: record login event
+    try:
+        db.add(AuditLog(
+            user_id=user.id,
+            action="login",
+            entry_id=None,
+            details={"email": user.email, "role": user.role},
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()  # never fail a login because of audit write
 
     access_token = create_access_token(
         subject=user.id,

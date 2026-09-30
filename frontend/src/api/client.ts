@@ -18,10 +18,11 @@ export function clearStoredToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+const baseURL = import.meta.env.VITE_API_BASE_URL || "https://wi-challango.onrender.com/api/v1";
 
 export const apiClient = axios.create({
   baseURL,
+  timeout: 75000, // 75s to allow Render free tier wake-up (takes 30-50s)
   headers: {
     "Content-Type": "application/json",
   },

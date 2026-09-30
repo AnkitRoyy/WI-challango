@@ -8,7 +8,6 @@ from app.models.entry import Entry
 
 def create_test_entry(db, serial, challan, vehicle, product, destination, qty, price, created_at, is_deleted=False):
     entry = Entry(
-        serial_no=serial,
         challan_no=challan,
         vehicle_no=vehicle,
         product=product,
@@ -128,7 +127,7 @@ def test_analytics_summary_empty_date_range_returns_empty_buckets(client, admin_
 def test_analytics_top_products_ranking_and_soft_delete(client, admin_headers, db):
     """GET /analytics/top-products returns items ranked by total_value and total_quantity excluding soft-deleted."""
     u = uuid.uuid4().hex[:6]
-    now = datetime(2026, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2028, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
     t = now - timedelta(days=1)
 
     # High value, low qty

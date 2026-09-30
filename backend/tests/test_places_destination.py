@@ -59,7 +59,6 @@ def test_create_entry_without_destination_fails_400(client, staff_headers):
     """Creating an entry without destination fails with 400 (required field)."""
     unique_id = uuid.uuid4().hex[:6]
     payload = {
-        "serial_no": "001",
         "challan_no": f"CH-NODEST-{unique_id}",
         "vehicle_no": "DL01AB1111",
         "product": "Steel Wire",
@@ -77,7 +76,6 @@ def test_create_entry_with_destination_no_coordinates_succeeds(client, staff_hea
     unique_id = uuid.uuid4().hex[:6]
     challan = f"CH-FREETEXT-{unique_id}"
     payload = {
-        "serial_no": "001",
         "challan_no": challan,
         "vehicle_no": "DL01AB2222",
         "product": "River Sand",
@@ -107,7 +105,6 @@ def test_create_entry_with_coordinates_from_suggestion_succeeds(client, staff_he
     unique_id = uuid.uuid4().hex[:6]
     challan = f"CH-COORDS-{unique_id}"
     payload = {
-        "serial_no": "001",
         "challan_no": challan,
         "vehicle_no": "MH12DE3333",
         "product": "Aggregate 20mm",
@@ -132,7 +129,6 @@ def test_multi_column_search_q_matches_destination(client, staff_headers):
     client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": challan,
             "vehicle_no": "KA01AB4444",
             "product": "Special Ceramic Tiles",
@@ -158,7 +154,6 @@ def test_destination_filter_param(client, staff_headers):
     client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": challan,
             "vehicle_no": "KA01AB5555",
             "product": "Pipes",
@@ -181,7 +176,7 @@ def test_import_missing_destination_marked_error(client, staff_headers):
     u = uuid.uuid4().hex[:6]
     # Row with blank Destination
     rows = [
-        ["001", f"CH-IMPERR-{u}", "DL01AB1234", "Steel Rods", "", "10", "500.00", "5000.00"],
+        [f"CH-IMPERR-{u}", "DL01AB1234", "Steel Rods", "", "10", "500.00", "5000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -202,7 +197,7 @@ def test_import_any_destination_text_succeeds(client, staff_headers, db):
     challan = f"CH-IMPDEST-{u}"
     custom_dest = "Remote Project Warehouse Sector 42"
     rows = [
-        ["001", challan, "DL01AB1234", "Steel Rods", custom_dest, "10", "500.00", "5000.00"],
+        [challan, "DL01AB1234", "Steel Rods", custom_dest, "10", "500.00", "5000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     preview_resp = client.post(

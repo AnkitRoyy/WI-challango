@@ -19,6 +19,7 @@ def build_entries_filter_query(
     vehicle_no: Optional[str] = None,
     challan_no: Optional[str] = None,
     destination: Optional[str] = None,
+    party_name: Optional[str] = None,
 ) -> Query:
     """
     Builds the base SQLAlchemy query with filters and search applied.
@@ -33,10 +34,10 @@ def build_entries_filter_query(
         query = query.filter(
             or_(
                 Entry.challan_no.ilike(term),
-                Entry.serial_no.ilike(term),
                 Entry.vehicle_no.ilike(term),
                 Entry.product.ilike(term),
                 Entry.destination.ilike(term),
+                Entry.party_name.ilike(term),
             )
         )
 
@@ -46,6 +47,9 @@ def build_entries_filter_query(
 
     if destination and destination.strip():
         query = query.filter(Entry.destination.ilike(f"%{destination.strip()}%"))
+
+    if party_name and party_name.strip():
+        query = query.filter(Entry.party_name.ilike(f"%{party_name.strip()}%"))
 
     if vehicle_no and vehicle_no.strip():
         clean_v = normalize_vehicle_no(vehicle_no)
@@ -97,3 +101,26 @@ def log_entry_audit(
         details=details,
     )
     db.add(audit)
+
+
+def compute_entry_pricing(
+    quantity: Decimal,
+    unit_price: Decimal,
+    gst_type: Optional[str] = "none",
+    gst_rate: Optional[Decimal] = None,
+) -> Tuple[Decimal, str, Optional[Decimal], Decimal, Decimal]:
+    """
+    Computes subtotal, gst_amount, and total_price server-side.
+    Returns: (subtotal, gst_type, gst_rate, gst_amount, total_price)
+    """
+    subtotal = (quantity * unit_price).quantize(Decimal("0.01"))
+    norm_type = (gst_type or "none").strip().lower()
+
+    if norm_type in ("cgst_sgst", "igst") and gst_rate is not None and gst_rate > Decimal("0"):
+        rate = gst_rate.quantize(Decimal("0.01"))
+        gst_amount = (subtotal * (rate / Decimal("100"))).quantize(Decimal("0.01"))
+        total_price = subtotal + gst_amount
+        return subtotal, norm_type, rate, gst_amount, total_price
+    else:
+        return subtotal, "none", None, Decimal("0.00"), subtotal
+

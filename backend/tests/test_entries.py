@@ -11,7 +11,6 @@ def test_create_entry_computes_total_price_ignoring_client_value(client, staff_h
     """Total price is always computed server-side as quantity * unit_price, ignoring client value."""
     unique_id = uuid.uuid4().hex[:6]
     payload = {
-        "serial_no": "TEST-001",
         "challan_no": f"CH-TEST-{unique_id}",
         "vehicle_no": "DL01AB9999",
         "product": "Testing TMT Bars 20mm",
@@ -27,7 +26,7 @@ def test_create_entry_computes_total_price_ignoring_client_value(client, staff_h
     assert Decimal(data["quantity"]) == Decimal("10.50")
     assert Decimal(data["unit_price"]) == Decimal("200.00")
     assert data["challan_no"] == f"CH-TEST-{unique_id}"
-    assert data["serial_no"] == "TEST-001"
+    assert "serial_no" not in data
     assert data["warning"] is None
 
 
@@ -38,7 +37,6 @@ def test_create_entry_invalid_quantity_or_price_returns_400(client, staff_header
     resp1 = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": f"CH-INV-1-{unique_id}",
             "vehicle_no": "MH12AB1234",
             "product": "Cement",
@@ -54,7 +52,6 @@ def test_create_entry_invalid_quantity_or_price_returns_400(client, staff_header
     resp2 = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": f"CH-INV-2-{unique_id}",
             "vehicle_no": "MH12AB1234",
             "product": "Cement",
@@ -70,7 +67,6 @@ def test_create_entry_invalid_quantity_or_price_returns_400(client, staff_header
     resp3 = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": f"CH-INV-3-{unique_id}",
             "vehicle_no": "MH12AB1234",
             "product": "Cement",
@@ -84,11 +80,11 @@ def test_create_entry_invalid_quantity_or_price_returns_400(client, staff_header
 
 
 def test_create_entry_duplicate_fails_with_409(client, staff_headers):
-    """Creating an entry with duplicate (challan_no, serial_no) fails with 409."""
+    """Creating an entry with duplicate (challan_no, product) fails with 409, but same challan_no with different product succeeds."""
     unique_id = uuid.uuid4().hex[:6]
-    payload = {
-        "serial_no": "DUP-001",
-        "challan_no": f"CH-DUP-{unique_id}",
+    challan = f"CH-DUP-{unique_id}"
+    payload1 = {
+        "challan_no": challan,
         "vehicle_no": "KA01AB1122",
         "product": "River Sand Grade-B",
         "destination": "Bengaluru, Karnataka",
@@ -96,22 +92,33 @@ def test_create_entry_duplicate_fails_with_409(client, staff_headers):
         "unit_price": "1200.00",
     }
     # First save succeeds
-    resp1 = client.post("/api/v1/entries", json=payload, headers=staff_headers)
+    resp1 = client.post("/api/v1/entries", json=payload1, headers=staff_headers)
     assert resp1.status_code == 201
 
-    # Second save with exact same challan_no and serial_no fails with 409
-    resp2 = client.post("/api/v1/entries", json=payload, headers=staff_headers)
+    # Second save with same challan_no but DIFFERENT product succeeds (multiple items per challan)
+    payload_diff_product = {
+        "challan_no": challan,
+        "vehicle_no": "KA01AB1122",
+        "product": "Coarse Aggregate 20mm",
+        "destination": "Bengaluru, Karnataka",
+        "quantity": "15.00",
+        "unit_price": "800.00",
+    }
+    resp_diff = client.post("/api/v1/entries", json=payload_diff_product, headers=staff_headers)
+    assert resp_diff.status_code == 201
+
+    # Third save with exact same challan_no and same product fails with 409
+    resp2 = client.post("/api/v1/entries", json=payload1, headers=staff_headers)
     assert resp2.status_code == 409
     detail = resp2.json()["detail"]
-    assert f"CH-DUP-{unique_id}" in detail
-    assert "DUP-001" in detail
+    assert challan in detail
+    assert "River Sand Grade-B" in detail
 
 
 def test_vehicle_number_normalized_on_save(client, staff_headers):
     """Vehicle number gets normalized (uppercase, spaces/hyphens stripped) on save."""
     unique_id = uuid.uuid4().hex[:6]
     payload = {
-        "serial_no": "NORM-001",
         "challan_no": f"CH-NORM-{unique_id}",
         "vehicle_no": "dl 01 ab-1234",
         "product": "Vitrified Tiles",
@@ -130,7 +137,6 @@ def test_non_standard_vehicle_number_saves_with_warning(client, staff_headers):
     """Vehicle number in an unexpected format still saves, with a warning present in response."""
     unique_id = uuid.uuid4().hex[:6]
     payload = {
-        "serial_no": "WARN-001",
         "challan_no": f"CH-WARN-{unique_id}",
         "vehicle_no": "TRACTOR-CUSTOM-99",
         "product": "Crushed Stone Aggregate",
@@ -153,7 +159,6 @@ def test_update_entry_recomputes_total_price(client, staff_headers):
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "UPD-001",
             "challan_no": f"CH-UPD-{unique_id}",
             "vehicle_no": "UP32AA4455",
             "product": "Ready Mix Concrete M20",
@@ -185,7 +190,6 @@ def test_delete_requires_admin_soft_deletes_row(client, staff_headers, admin_hea
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "DEL-001",
             "challan_no": f"CH-DEL-{unique_id}",
             "vehicle_no": "HR26DQ1111",
             "product": "Plasticizers",
@@ -219,7 +223,6 @@ def test_soft_deleted_entries_never_appear_in_get(client, staff_headers, admin_h
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "HIDE-001",
             "challan_no": challan,
             "vehicle_no": "KA04FG9999",
             "product": "Hidden Item",
@@ -258,7 +261,7 @@ def test_list_pagination(client, staff_headers):
 
 
 def test_list_search_q_matches_across_four_fields(client, staff_headers):
-    """Search q matches partial, case-insensitive text across challan_no, serial_no, vehicle_no, product."""
+    """Search q matches partial, case-insensitive text across challan_no, vehicle_no, product, destination."""
     # 1. Match by product
     r1 = client.get("/api/v1/entries", params={"q": "UltraTech"}, headers=staff_headers)
     assert r1.status_code == 200
@@ -274,10 +277,22 @@ def test_list_search_q_matches_across_four_fields(client, staff_headers):
     assert r3.status_code == 200
     assert any(item["challan_no"] == "CH-2026-001" for item in r3.json()["items"])
 
-    # 4. Match by serial_no
-    r4 = client.get("/api/v1/entries", params={"q": "002"}, headers=staff_headers)
+    # 4. Match by destination
+    r4 = client.get("/api/v1/entries", params={"q": "Pune"}, headers=staff_headers)
     assert r4.status_code == 200
-    assert any(item["serial_no"] == "002" for item in r4.json()["items"])
+    assert any("Pune" in (item.get("destination") or "") for item in r4.json()["items"])
+
+
+def test_vehicle_suggestions(client, staff_headers):
+    """Vehicle suggestions endpoint returns distinct matches, case-insensitive, limit 10, MRU first."""
+    resp = client.get("/api/v1/entries/vehicle-suggestions", params={"q": "dl01"}, headers=staff_headers)
+    assert resp.status_code == 200
+    results = resp.json()
+    assert isinstance(results, list)
+    assert any("DL01AB1234" in v for v in results)
+    # Check limit 10 and distinct
+    assert len(results) <= 10
+    assert len(results) == len(set(results))
 
 
 def test_list_and_summary_filters_consistency(client, staff_headers):
@@ -332,7 +347,6 @@ def test_audit_log_created_for_create_update_delete(client, admin_headers, staff
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "AUDIT-01",
             "challan_no": challan,
             "vehicle_no": "DL09XX1212",
             "product": "Audit Logging Test Material",

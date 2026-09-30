@@ -36,3 +36,88 @@ export function formatDate(isoString: string | null | undefined): string {
     return "-";
   }
 }
+
+/**
+ * Converts an amount in Indian Rupees to words (e.g. 24640 -> "Twenty Four Thousand Six Hundred Forty Rupees Only").
+ */
+export function amountInWordsIndian(amount: number | string | null | undefined): string {
+  if (amount === null || amount === undefined || amount === "") return "Zero Rupees Only";
+  const num = typeof amount === "string" ? parseFloat(amount) : amount;
+  if (isNaN(num) || num === 0) return "Zero Rupees Only";
+
+  const singleDigits = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+  const teens = [
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
+  ];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+  function convertBelowThousand(n: number): string {
+    let str = "";
+    if (n >= 100) {
+      str += singleDigits[Math.floor(n / 100)] + " Hundred ";
+      n %= 100;
+    }
+    if (n >= 20) {
+      str += tens[Math.floor(n / 10)] + " ";
+      n %= 10;
+    } else if (n >= 10) {
+      str += teens[n - 10] + " ";
+      n = 0;
+    }
+    if (n > 0) {
+      str += singleDigits[n] + " ";
+    }
+    return str.trim();
+  }
+
+  const [rupeesPart, paisePart] = Math.abs(num).toFixed(2).split(".");
+  let rupees = parseInt(rupeesPart, 10);
+  const paise = parseInt(paisePart, 10);
+
+  let words = "";
+
+  const crore = Math.floor(rupees / 10000000);
+  rupees %= 10000000;
+
+  const lakh = Math.floor(rupees / 100000);
+  rupees %= 100000;
+
+  const thousand = Math.floor(rupees / 1000);
+  rupees %= 1000;
+
+  const remainder = rupees;
+
+  if (crore > 0) {
+    words += convertBelowThousand(crore) + " Crore ";
+  }
+  if (lakh > 0) {
+    words += convertBelowThousand(lakh) + " Lakh ";
+  }
+  if (thousand > 0) {
+    words += convertBelowThousand(thousand) + " Thousand ";
+  }
+  if (remainder > 0) {
+    words += convertBelowThousand(remainder) + " ";
+  }
+
+  words = words.trim();
+  if (!words) {
+    words = "Zero";
+  }
+
+  let result = `${words} Rupees`;
+  if (paise > 0) {
+    result += ` and ${convertBelowThousand(paise)} Paise`;
+  }
+  result += " Only";
+  return result;
+}

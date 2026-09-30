@@ -15,6 +15,7 @@ import {
   FileInput,
   Progress,
   Accordion,
+  Menu,
   useMantineColorScheme,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -29,6 +30,7 @@ import {
   IconArrowRight,
   IconRefresh,
   IconMapPin,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -63,10 +65,10 @@ export const ImportPage: React.FC = () => {
   const [commitResult, setCommitResult] = useState<ImportCommitResponse | null>(null);
 
   // Download template handler
-  const handleDownloadTemplate = async () => {
+  const handleDownloadTemplate = async (format: "csv" | "xlsx" = "csv") => {
     setIsDownloadingTemplate(true);
     try {
-      const { blob, filename } = await downloadImportTemplateApi();
+      const { blob, filename } = await downloadImportTemplateApi(format);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -78,7 +80,7 @@ export const ImportPage: React.FC = () => {
 
       notifications.show({
         title: "Template Downloaded",
-        message: "Use this Excel template to format delivery records before importing.",
+        message: `Use this ${format.toUpperCase()} template to format delivery records before importing.`,
         color: "green",
         icon: <IconCheck size={18} />,
       });
@@ -216,17 +218,35 @@ export const ImportPage: React.FC = () => {
           </Text>
         </Box>
 
-        <Button
-          variant="outline"
-          color="blue"
-          size="sm"
-          radius="md"
-          leftSection={<IconDownload size={16} />}
-          loading={isDownloadingTemplate}
-          onClick={handleDownloadTemplate}
-        >
-          Download Template
-        </Button>
+        <Menu shadow="md" width={220} position="bottom-end">
+          <Menu.Target>
+            <Button
+              variant="outline"
+              color="blue"
+              size="sm"
+              radius="md"
+              leftSection={<IconDownload size={16} />}
+              rightSection={<IconChevronDown size={14} />}
+              loading={isDownloadingTemplate}
+            >
+              Download Template
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<IconFileSpreadsheet size={16} color="#10B981" />}
+              onClick={() => handleDownloadTemplate("csv")}
+            >
+              CSV Template (.csv)
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconFileSpreadsheet size={16} color="#3B82F6" />}
+              onClick={() => handleDownloadTemplate("xlsx")}
+            >
+              Excel Template (.xlsx)
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </Group>
 
       {/* Post-Commit Result Card */}
@@ -650,7 +670,6 @@ export const ImportPage: React.FC = () => {
                     <Table.Tr>
                       <Table.Th style={{ width: 60 }}>#</Table.Th>
                       <Table.Th style={{ width: 100 }}>Status</Table.Th>
-                      <Table.Th style={{ width: 100 }}>Serial No</Table.Th>
                       <Table.Th style={{ width: 130 }}>Challan No</Table.Th>
                       <Table.Th style={{ width: 120 }}>Vehicle No</Table.Th>
                       <Table.Th>Product</Table.Th>
@@ -682,11 +701,6 @@ export const ImportPage: React.FC = () => {
                             </Text>
                           </Table.Td>
                           <Table.Td>{getStatusBadge(row.status)}</Table.Td>
-                          <Table.Td>
-                            <Text size="xs" fw={600} c={textPrimary}>
-                              {rowData.serial_no || "-"}
-                            </Text>
-                          </Table.Td>
                           <Table.Td>
                             <Text size="xs" fw={600} c={textPrimary}>
                               {rowData.challan_no || "-"}

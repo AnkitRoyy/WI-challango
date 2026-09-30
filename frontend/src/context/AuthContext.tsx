@@ -31,10 +31,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userData = await getMeApi();
       setUser(userData);
       setToken(currentToken);
-    } catch {
-      clearStoredToken();
-      setUser(null);
-      setToken(null);
+    } catch (err: unknown) {
+      // Only clear token on 401 Unauthorized (invalid/expired session).
+      // Transient wake-up delays or network glitches should NOT log out the user.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 401) {
+        clearStoredToken();
+        setUser(null);
+        setToken(null);
+      }
     } finally {
       setIsLoading(false);
     }

@@ -34,6 +34,8 @@ import {
   IconUser,
   IconUsers,
   IconDotsVertical,
+  IconSettings,
+  IconPhone,
 } from "@tabler/icons-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -44,6 +46,8 @@ import {
   hardDeleteUserApi,
   type UserCreatePayload,
 } from "../api/users";
+import { fetchChallanSettingsApi, updateChallanSettingsApi } from "../api/entries";
+import { getCompanyPhoneApi, updateCompanyPhoneApi } from "../api/parties";
 import type { User } from "../api/auth";
 import { formatDate } from "../utils/formatters";
 import { useAuth } from "../context/AuthContext";
@@ -69,6 +73,55 @@ export const UsersPage: React.FC = () => {
   // Delete modal state
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [deleteError, setDeleteError] = useState<{ message: string; is409: boolean } | null>(null);
+
+  // Hidden challan sequence and company phone variable state
+  const { data: challanSettings } = useQuery({
+    queryKey: ["challan-settings"],
+    queryFn: () => fetchChallanSettingsApi(),
+  });
+  const { data: companyPhoneData } = useQuery({
+    queryKey: ["company-phone"],
+    queryFn: () => getCompanyPhoneApi(),
+  });
+  const [isChallanModalOpen, setIsChallanModalOpen] = useState(false);
+  const [challanBaseInput, setChallanBaseInput] = useState("");
+  const [companyPhoneInput, setCompanyPhoneInput] = useState("");
+  const [isSavingChallanSetting, setIsSavingChallanSetting] = useState(false);
+
+  const handleOpenChallanModal = () => {
+    setChallanBaseInput(challanSettings?.wi_initial_challan_no || "1");
+    setCompanyPhoneInput(companyPhoneData || "9034218483");
+    setIsChallanModalOpen(true);
+  };
+
+  const handleSaveChallanSetting = async () => {
+    if (!challanBaseInput.trim()) return;
+    setIsSavingChallanSetting(true);
+    try {
+      await updateChallanSettingsApi(challanBaseInput.trim());
+      if (companyPhoneInput.trim()) {
+        await updateCompanyPhoneApi(companyPhoneInput.trim());
+      }
+      queryClient.invalidateQueries({ queryKey: ["challan-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["company-phone"] });
+      notifications.show({
+        title: "Settings Updated",
+        message: `Company starting challan: '${challanBaseInput.trim()}', Phone: '${companyPhoneInput.trim() || "9034218483"}'.`,
+        color: "green",
+        icon: <IconCheck size={18} />,
+      });
+      setIsChallanModalOpen(false);
+    } catch (err: any) {
+      notifications.show({
+        title: "Update Failed",
+        message: err?.response?.data?.detail || "Could not update settings.",
+        color: "red",
+        icon: <IconAlertCircle size={18} />,
+      });
+    } finally {
+      setIsSavingChallanSetting(false);
+    }
+  };
 
   // Fetch users query
   const usersQuery = useQuery({
@@ -515,6 +568,58 @@ export const UsersPage: React.FC = () => {
         </Paper>
       </Box>
 
+      {/* ── Company Challan Sequence Variable (Visible on Mobile & Desktop) ── */}
+      <Paper
+        p="md"
+        mt="lg"
+        radius="md"
+        withBorder
+        style={{
+          backgroundColor: isDark ? "#0F172A" : "#F8FAFC",
+          borderColor: cardBorder,
+        }}
+      >
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+          <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: "220px" }}>
+            <Box
+              style={{
+                backgroundColor: isDark ? "#1E293B" : "#EFF6FF",
+                padding: "8px",
+                borderRadius: "8px",
+                display: "flex",
+                alignItems: "center",
+                flexShrink: 0,
+              }}
+            >
+              <IconSettings size={20} color="#2563EB" />
+            </Box>
+            <Box>
+              <Text fw={700} size="sm" c={textPrimary}>
+                Company Sequence &amp; Contact Settings
+              </Text>
+              <Text size="xs" c={textMuted}>
+                Configure base starting challan variable and company phone number printed on delivery challans.
+              </Text>
+            </Box>
+          </Group>
+          <Group gap="xs" wrap="nowrap">
+            <Badge variant="light" color="blue" size="sm" ff="monospace">
+              Base: {challanSettings?.wi_initial_challan_no || "1"}
+            </Badge>
+            <Badge variant="light" color="gray" size="sm" ff="monospace">
+              Phone: {companyPhoneData || "9034218483"}
+            </Badge>
+            <Button
+              variant="default"
+              size="xs"
+              onClick={handleOpenChallanModal}
+            >
+              Configure Settings
+            </Button>
+          </Group>
+        </Group>
+      </Paper>
+
       {/* Create User Modal */}
       <Modal
         opened={isCreateModalOpen}
@@ -706,6 +811,62 @@ export const UsersPage: React.FC = () => {
                 Permanently Delete
               </Button>
             )}
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Configure WI Base Starting Number & Company Phone Modal */}
+      <Modal
+        opened={isChallanModalOpen}
+        onClose={() => setIsChallanModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <IconSettings size={18} color="#3B82F6" />
+            <Text fw={700} size="sm" c={textPrimary}>
+              Company Profile &amp; Sequence Settings
+            </Text>
+          </Group>
+        }
+        size="md"
+        centered
+        radius="md"
+      >
+        <Stack gap="md">
+          <Text size="xs" c={textMuted}>
+            Configure company settings used across printed delivery challans and automatic sequences.
+          </Text>
+          <TextInput
+            label="Base Starting Challan No"
+            description="Starting variable for company series (e.g. 1 or WI-001)"
+            placeholder="e.g. 1 or WI-001"
+            value={challanBaseInput}
+            onChange={(e) => setChallanBaseInput(e.currentTarget.value)}
+          />
+          <TextInput
+            label="Company Phone Number"
+            description="Printed on delivery challans as the company contact number"
+            placeholder="e.g. 9034218483"
+            leftSection={<IconPhone size={16} />}
+            value={companyPhoneInput}
+            onChange={(e) => setCompanyPhoneInput(e.currentTarget.value)}
+          />
+          <Group justify="flex-end" gap="xs">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setIsChallanModalOpen(false)}
+              disabled={isSavingChallanSetting}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="blue"
+              size="sm"
+              onClick={handleSaveChallanSetting}
+              loading={isSavingChallanSetting}
+            >
+              Save Settings
+            </Button>
           </Group>
         </Stack>
       </Modal>

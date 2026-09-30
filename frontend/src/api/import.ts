@@ -33,11 +33,12 @@ export interface ImportCommitResponse {
   message: string;
 }
 
-export async function downloadImportTemplateApi(): Promise<{ blob: Blob; filename: string }> {
+export async function downloadImportTemplateApi(format: "csv" | "xlsx" = "csv"): Promise<{ blob: Blob; filename: string }> {
   const response = await apiClient.get("/entries/import/template", {
+    params: { format },
     responseType: "blob",
   });
-  return { blob: response.data, filename: "challan_import_template.xlsx" };
+  return { blob: response.data, filename: `challan_import_template.${format}` };
 }
 
 export async function previewImportApi(file: File): Promise<ImportPreviewResponse> {

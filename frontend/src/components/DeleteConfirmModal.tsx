@@ -28,7 +28,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
       queryClient.invalidateQueries({ queryKey: ["entries-summary"] });
       notifications.show({
         title: "Entry Deleted",
-        message: `Challan ${entry?.challan_no} (Serial: ${entry?.serial_no}) was soft-deleted.`,
+        message: `Challan ${entry?.challan_no} (${entry?.product}) was soft-deleted.`,
         color: "green",
         icon: <IconCheck size={18} />,
       });
@@ -65,8 +65,8 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
         </Alert>
 
         <Text size="sm">
-          Are you sure you want to delete Challan <b>{entry.challan_no}</b> (Serial:{" "}
-          <b>{entry.serial_no}</b>) for product <b>{entry.product}</b>?
+          Are you sure you want to delete Challan <b>{entry.challan_no}</b> for product{" "}
+          <b>{entry.product}</b>?
         </Text>
 
         <Group justify="flex-end" mt="md" gap="xs">

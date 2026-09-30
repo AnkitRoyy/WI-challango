@@ -5,28 +5,38 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class EntryBase(BaseModel):
-    serial_no: str
     challan_no: str
+    challan_series: str = "own"
     vehicle_no: str
     product: str
     destination: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    party_name: Optional[str] = None
     quantity: Decimal
     unit_price: Decimal
-    total_price: Optional[Decimal] = None  # Ignored if passed; recomputed on server
+    gst_type: str = "none"
+    gst_rate: Optional[Decimal] = None
+    subtotal: Optional[Decimal] = None  # Recomputed on server
+    gst_amount: Optional[Decimal] = None  # Recomputed on server
+    total_price: Optional[Decimal] = None  # Recomputed on server
 
 
 class EntryCreate(BaseModel):
-    serial_no: str
     challan_no: str
+    challan_series: str = "own"
     vehicle_no: str
     product: str
     destination: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    party_name: Optional[str] = None
     quantity: Decimal
     unit_price: Decimal
+    gst_type: str = "none"
+    gst_rate: Optional[Decimal] = None
+    subtotal: Optional[Decimal] = None
+    gst_amount: Optional[Decimal] = None
     total_price: Optional[Decimal] = None
 
     @field_validator("quantity")
@@ -43,25 +53,53 @@ class EntryCreate(BaseModel):
             raise ValueError("Field 'unit_price' must be greater than or equal to 0")
         return v
 
-    @field_validator("serial_no", "challan_no", "vehicle_no", "product", "destination")
+    @field_validator("gst_type")
+    @classmethod
+    def validate_gst_type(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if clean not in ("none", "cgst_sgst", "igst"):
+            raise ValueError("Field 'gst_type' must be one of: 'none', 'cgst_sgst', 'igst'")
+        return clean
+
+    @field_validator("gst_rate")
+    @classmethod
+    def validate_gst_rate(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is not None and (v < Decimal("0") or v > Decimal("100")):
+            raise ValueError("Field 'gst_rate' must be between 0 and 100")
+        return v
+
+    @field_validator("challan_no", "vehicle_no", "product", "destination")
     @classmethod
     def validate_non_empty_strings(cls, v: str, info) -> str:
         if not v or not v.strip():
             raise ValueError(f"Field '{info.field_name}' is required and cannot be blank")
         return v.strip()
 
+    @field_validator("party_name")
+    @classmethod
+    def validate_party_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            clean = v.strip()
+            return clean if clean else None
+        return None
+
 
 class EntryUpdate(BaseModel):
-    serial_no: Optional[str] = None
     challan_no: Optional[str] = None
+    challan_series: Optional[str] = None
     vehicle_no: Optional[str] = None
     product: Optional[str] = None
     destination: Optional[str] = None
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    party_name: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
-    total_price: Optional[Decimal] = None  # Ignored if passed; recomputed on server
+    gst_type: Optional[str] = None
+    gst_rate: Optional[Decimal] = None
+    subtotal: Optional[Decimal] = None
+    gst_amount: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
 
     @field_validator("quantity")
     @classmethod
@@ -77,25 +115,55 @@ class EntryUpdate(BaseModel):
             raise ValueError("Field 'unit_price' must be greater than or equal to 0")
         return v
 
-    @field_validator("serial_no", "challan_no", "vehicle_no", "product", "destination")
+    @field_validator("gst_type")
+    @classmethod
+    def validate_gst_type_update(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            clean = v.strip().lower()
+            if clean not in ("none", "cgst_sgst", "igst"):
+                raise ValueError("Field 'gst_type' must be one of: 'none', 'cgst_sgst', 'igst'")
+            return clean
+        return v
+
+    @field_validator("gst_rate")
+    @classmethod
+    def validate_gst_rate_update(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is not None and (v < Decimal("0") or v > Decimal("100")):
+            raise ValueError("Field 'gst_rate' must be between 0 and 100")
+        return v
+
+    @field_validator("challan_no", "vehicle_no", "product", "destination")
     @classmethod
     def validate_optional_strings(cls, v: Optional[str], info) -> Optional[str]:
         if v is not None and not v.strip():
             raise ValueError(f"Field '{info.field_name}' cannot be empty")
         return v.strip() if v is not None else None
 
+    @field_validator("party_name")
+    @classmethod
+    def validate_party_name_update(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            clean = v.strip()
+            return clean if clean else None
+        return None
+
 
 class EntryResponse(BaseModel):
     id: int
-    serial_no: str
     challan_no: str
+    challan_series: str = "own"
     vehicle_no: str
     product: str
     destination: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    party_name: Optional[str] = None
     quantity: Decimal
     unit_price: Decimal
+    gst_type: str = "none"
+    gst_rate: Optional[Decimal] = None
+    subtotal: Decimal
+    gst_amount: Decimal
     total_price: Decimal
     created_at: datetime
     updated_at: datetime

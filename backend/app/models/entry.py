@@ -9,15 +9,20 @@ class Entry(Base):
     __tablename__ = "entries"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    serial_no: Mapped[str] = mapped_column(String(100), nullable=False)
     challan_no: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    challan_series: Mapped[str] = mapped_column(String(50), nullable=False, default="own", server_default="own", index=True)
     vehicle_no: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     product: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     destination: Mapped[str] = mapped_column(String(255), nullable=False, default="Mumbai", index=True)
     destination_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     destination_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    party_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    gst_type: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
+    gst_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0.00"), server_default="0.00")
+    gst_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0.00"), server_default="0.00")
     total_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -51,9 +56,9 @@ class Entry(Base):
 
     __table_args__ = (
         Index(
-            "uq_challan_serial_active",
+            "uq_challan_product_active",
             "challan_no",
-            "serial_no",
+            "product",
             unique=True,
             postgresql_where=(is_deleted.is_(False)),
         ),

@@ -51,7 +51,6 @@ def test_hard_delete_user_with_associated_entries_fails_with_409(client, admin_h
 
     # Create an entry associated with this worker
     entry = Entry(
-        serial_no="001",
         challan_no=f"CH-WRK-{u}",
         vehicle_no="MH12AB9999",
         product="Steel Rebars",

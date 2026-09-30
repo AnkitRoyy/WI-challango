@@ -1,3 +1,4 @@
+
 import io
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -34,13 +35,27 @@ def _create_test_csv_bytes(headers, rows):
 
 
 STANDARD_HEADERS = [
-    "Serial No",
     "Challan No",
     "Vehicle No",
     "Product",
     "Destination",
     "Quantity",
     "Unit Price",
+    "Total Price",
+]
+
+TEMPLATE_HEADERS = [
+    "Challan No",
+    "Vehicle No",
+    "Party",
+    "Product",
+    "Destination",
+    "Quantity",
+    "Unit Price",
+    "Subtotal",
+    "GST Type",
+    "GST Rate (%)",
+    "GST Amount",
     "Total Price",
 ]
 
@@ -59,25 +74,36 @@ def test_import_template_headers_and_example_row(client, staff_headers):
     assert ws.freeze_panes == "A2"
 
     # Header check
-    headers = [ws.cell(1, col).value for col in range(1, 9)]
-    assert headers == STANDARD_HEADERS
+    headers = [ws.cell(1, col).value for col in range(1, 13)]
+    assert headers == TEMPLATE_HEADERS
 
     # Example row check
-    assert ws.cell(2, 1).value == "SN001"
-    assert ws.cell(2, 2).value == "CH1001"
-    assert ws.cell(2, 3).value == "DL01AB1234"
+    assert ws.cell(2, 1).value == "CH1001"
+    assert ws.cell(2, 2).value == "DL01AB1234"
+    assert ws.cell(2, 3).value == "Acme Enterprises"
     assert ws.cell(2, 1).font.italic is True
     # Comment on A2
     assert ws.cell(2, 1).comment is not None
     assert "delete or overwrite" in ws.cell(2, 1).comment.text.lower()
 
 
+def test_import_csv_template_headers_and_example(client, staff_headers):
+    """CSV template download has correct headers and example row."""
+    response = client.get("/api/v1/entries/import/template?format=csv", headers=staff_headers)
+    assert response.status_code == 200
+    assert "text/csv" in response.headers["content-type"]
+    assert 'filename="challan_import_template.csv"' in response.headers["content-disposition"]
+    lines = response.text.strip().split("\r\n" if "\r\n" in response.text else "\n")
+    assert lines[0] == ",".join(TEMPLATE_HEADERS)
+    assert "WEST INDUSTRIES" in lines[1]
+
+
 def test_preview_valid_file_all_ok(client, staff_headers):
     """Valid file with clean rows returns status 'ok' for every row and accurate counts."""
     u = uuid.uuid4().hex[:6]
     rows = [
-        ["001", f"CH-VAL-{u}-1", "DL01AB1234", "Steel Rods", "Mumbai, Maharashtra", "10", "500.00", "5000.00"],
-        ["002", f"CH-VAL-{u}-1", "DL01AB1234", "Cement Bags", "Pune, Maharashtra", "20", "350.00", "7000.00"],
+        [f"CH-VAL-{u}-1", "DL01AB1234", "Steel Rods", "Mumbai, Maharashtra", "10", "500.00", "5000.00"],
+        [f"CH-VAL-{u}-1", "DL01AB1234", "Cement Bags", "Pune, Maharashtra", "20", "350.00", "7000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -101,8 +127,8 @@ def test_preview_valid_file_all_ok(client, staff_headers):
 def test_preview_missing_required_header_fails_immediately(client, staff_headers):
     """Missing a required header fails with 400 listing the missing header with no row processing."""
     # Missing 'Unit Price'
-    bad_headers = ["Serial No", "Challan No", "Vehicle No", "Product", "Destination", "Quantity"]
-    rows = [["001", "CH-1", "DL01AB1234", "Pipes", "Delhi NCR", "10"]]
+    bad_headers = ["Challan No", "Vehicle No", "Product", "Destination", "Quantity"]
+    rows = [["CH-1", "DL01AB1234", "Pipes", "Delhi NCR", "10"]]
     file_bytes = _create_test_xlsx_bytes(bad_headers, rows)
 
     response = client.post(
@@ -119,7 +145,7 @@ def test_preview_non_numeric_quantity_marked_error(client, staff_headers):
     """Row with non-numeric quantity gets status 'error' with clear message."""
     u = uuid.uuid4().hex[:6]
     rows = [
-        ["001", f"CH-NUM-{u}", "DL01AB1234", "Bricks", "Delhi NCR", "NOT_A_NUMBER", "100.00", "1000.00"],
+        [f"CH-NUM-{u}", "DL01AB1234", "Bricks", "Delhi NCR", "NOT_A_NUMBER", "100.00", "1000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -139,7 +165,7 @@ def test_preview_total_price_mismatch_marked_warning(client, staff_headers):
     u = uuid.uuid4().hex[:6]
     # 10 * 500 = 5000, but file says 9999.00
     rows = [
-        ["001", f"CH-MIS-{u}", "DL01AB1234", "Granite", "Ahmedabad, Gujarat", "10", "500.00", "9999.00"],
+        [f"CH-MIS-{u}", "DL01AB1234", "Granite", "Ahmedabad, Gujarat", "10", "500.00", "9999.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -158,12 +184,12 @@ def test_preview_total_price_mismatch_marked_warning(client, staff_headers):
 
 
 def test_preview_in_file_duplicate_marked_error_on_second_occurrence(client, staff_headers):
-    """Two rows in the same file with same (Challan No, Serial No) -> first ok, second error."""
+    """Two rows in the same file with same (Challan No, Product) -> first ok, second error."""
     u = uuid.uuid4().hex[:6]
     challan = f"CH-DUPFILE-{u}"
     rows = [
-        ["001", challan, "DL01AB1234", "Tiles", "Jaipur, Rajasthan", "10", "200.00", "2000.00"],
-        ["001", challan, "DL01AB1234", "Tiles Duplicate", "Jaipur, Rajasthan", "15", "200.00", "3000.00"],
+        [challan, "DL01AB1234", "Tiles", "Jaipur, Rajasthan", "10", "200.00", "2000.00"],
+        [challan, "DL01AB1234", "Tiles", "Jaipur, Rajasthan", "15", "200.00", "3000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -186,7 +212,6 @@ def test_preview_db_duplicate_marked_duplicate(client, staff_headers):
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": "001",
             "challan_no": challan,
             "vehicle_no": "DL01AB1234",
             "product": "Original DB Product",
@@ -198,9 +223,9 @@ def test_preview_db_duplicate_marked_duplicate(client, staff_headers):
     )
     assert create_resp.status_code == 201
 
-    # 2. Upload file with same challan + serial
+    # 2. Upload file with same challan + product
     rows = [
-        ["001", challan, "DL01AB1234", "Uploaded New Product", "Kolkata, West Bengal", "8.00", "120.00", "960.00"],
+        [challan, "DL01AB1234", "Original DB Product", "Kolkata, West Bengal", "8.00", "120.00", "960.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -219,9 +244,9 @@ def test_preview_skips_blank_rows_silently(client, staff_headers):
     """Blank rows in the middle of file are skipped silently and not counted as errors."""
     u = uuid.uuid4().hex[:6]
     rows = [
-        ["001", f"CH-BLK-{u}-1", "DL01AB1234", "Product A", "Mumbai, Maharashtra", "10", "100.00", "1000.00"],
-        ["", "", "", "", "", "", "", ""],  # Completely blank
-        ["002", f"CH-BLK-{u}-2", "DL01AB1234", "Product B", "Delhi NCR", "20", "200.00", "4000.00"],
+        [f"CH-BLK-{u}-1", "DL01AB1234", "Product A", "Mumbai, Maharashtra", "10", "100.00", "1000.00"],
+        ["", "", "", "", "", "", ""],  # Completely blank
+        [f"CH-BLK-{u}-2", "DL01AB1234", "Product B", "Delhi NCR", "20", "200.00", "4000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     response = client.post(
@@ -238,7 +263,7 @@ def test_preview_skips_blank_rows_silently(client, staff_headers):
 
 def test_preview_file_over_10000_rows_rejected_with_400(client, staff_headers):
     """File over 10,000 rows is rejected with 400 before heavy processing."""
-    rows = [["001", f"CH-{i}", "DL01AB1234", "Product", "City", "1", "10.00", "10.00"] for i in range(10005)]
+    rows = [[f"CH-{i}", "DL01AB1234", f"Product-{i}", "City", "1", "10.00", "10.00"] for i in range(10005)]
     file_bytes = _create_test_csv_bytes(STANDARD_HEADERS, rows)
 
     response = client.post(
@@ -271,7 +296,6 @@ def test_commit_strategy_skip(client, staff_headers, db):
 
     # 1. Existing entry
     existing_entry = Entry(
-        serial_no="001",
         challan_no=challan_exist,
         vehicle_no="DL01AB1234",
         product="Old Unchanged Product",
@@ -286,9 +310,9 @@ def test_commit_strategy_skip(client, staff_headers, db):
 
     # 2. Preview file with 1 existing duplicate, 1 ok new row, 1 error row
     rows = [
-        ["001", challan_exist, "DL01AB1234", "Should Be Skipped", "Delhi NCR", "99", "999.00", "98901.00"], # Duplicate
-        ["001", challan_new, "DL01AB1234", "New Valid Product", "Mumbai, Maharashtra", "5", "200.00", "1000.00"],       # OK
-        ["002", challan_new, "DL01AB1234", "Invalid Product", "Mumbai, Maharashtra", "-5", "200.00", "0.00"],          # Error
+        [challan_exist, "DL01AB1234", "Old Unchanged Product", "Delhi NCR", "99", "999.00", "98901.00"], # Duplicate
+        [challan_new, "DL01AB1234", "New Valid Product", "Mumbai, Maharashtra", "5", "200.00", "1000.00"],       # OK
+        [challan_new, "DL01AB1234", "Invalid Product", "Mumbai, Maharashtra", "-5", "200.00", "0.00"],          # Error
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     preview_resp = client.post(
@@ -319,12 +343,12 @@ def test_commit_strategy_skip(client, staff_headers, db):
     assert reloaded.quantity == Decimal("10.00")
 
     # New entry inserted
-    new_db = db.query(Entry).filter(Entry.challan_no == challan_new, Entry.serial_no == "001").first()
+    new_db = db.query(Entry).filter(Entry.challan_no == challan_new, Entry.product == "New Valid Product").first()
     assert new_db is not None
     assert new_db.product == "New Valid Product"
 
     # Error row was not inserted
-    err_db = db.query(Entry).filter(Entry.challan_no == challan_new, Entry.serial_no == "002").first()
+    err_db = db.query(Entry).filter(Entry.challan_no == challan_new, Entry.product == "Invalid Product").first()
     assert err_db is None
 
 
@@ -335,7 +359,6 @@ def test_commit_strategy_update(client, staff_headers, db):
 
     # 1. Existing entry
     existing_entry = Entry(
-        serial_no="001",
         challan_no=challan,
         vehicle_no="DL01AB1234",
         product="Original Product",
@@ -350,7 +373,7 @@ def test_commit_strategy_update(client, staff_headers, db):
 
     # 2. Preview file updating this row with new quantity and unit price
     rows = [
-        ["001", challan, "MH12DE9999", "Updated Product Name", "Pune, Maharashtra", "20", "150.00", "3000.00"],
+        [challan, "MH12DE9999", "Original Product", "Pune, Maharashtra", "20", "150.00", "3000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
     preview_resp = client.post(
@@ -374,8 +397,8 @@ def test_commit_strategy_update(client, staff_headers, db):
 
     # 4. Verify DB entry was updated and total_price recomputed server-side
     db.expire_all()
-    reloaded = db.query(Entry).filter(Entry.challan_no == challan).first()
-    assert reloaded.product == "Updated Product Name"
+    reloaded = db.query(Entry).filter(Entry.challan_no == challan, Entry.product == "Original Product").first()
+    assert reloaded.product == "Original Product"
     assert reloaded.vehicle_no == "MH12DE9999"
     assert reloaded.quantity == Decimal("20.00")
     assert reloaded.unit_price == Decimal("150.00")
@@ -422,7 +445,7 @@ def test_formula_injection_sanitized_in_preview_and_db(client, staff_headers, db
     challan = f"CH-INJIMP-{u}"
     dangerous_product = "=SUM(A1:A10)"
     rows = [
-        ["001", challan, "DL01AB1234", dangerous_product, "Surat, Gujarat", "10", "100.00", "1000.00"],
+        [challan, "DL01AB1234", dangerous_product, "Surat, Gujarat", "10", "100.00", "1000.00"],
     ]
     file_bytes = _create_test_xlsx_bytes(STANDARD_HEADERS, rows)
 

@@ -1,7 +1,8 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MantineProvider, createTheme, Loader, Center } from "@mantine/core";
+import { MantineProvider, createTheme, Loader, Center, Stack, Text, Box } from "@mantine/core";
+import { IconTruckDelivery } from "@tabler/icons-react";
 import { Notifications } from "@mantine/notifications";
 
 import "@mantine/core/styles.css";
@@ -19,6 +20,8 @@ import { UsersPage } from "./pages/UsersPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { PartiesPage } from "./pages/PartiesPage";
+import { ProfilePage } from "./pages/ProfilePage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,16 +58,60 @@ const theme = createTheme({
   },
 });
 
+// Branded loading screen with graceful Render free tier server wake-up notification
+const LoadingScreen: React.FC = () => {
+  const [showWakingMessage, setShowWakingMessage] = React.useState(false);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowWakingMessage(true);
+    }, 3500); // After 3.5s of loading, inform user that server is waking up
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <Center
+      style={{
+        minHeight: "100vh",
+        backgroundColor: "var(--c-bg, #0A0A0A)",
+        padding: "24px",
+      }}
+    >
+      <Stack align="center" gap="md" maw={380} ta="center">
+        <Box
+          style={{
+            backgroundColor: "#2563EB",
+            color: "white",
+            padding: "12px",
+            borderRadius: "14px",
+            display: "inline-flex",
+            boxShadow: "0 6px 20px rgba(37, 99, 235, 0.4)",
+          }}
+        >
+          <IconTruckDelivery size={36} />
+        </Box>
+        <Loader size="md" color="blue" type="dots" />
+        <Text fw={600} size="md" c="var(--c-text-primary, #FFFFFF)">
+          {showWakingMessage
+            ? "Waking up server, this may take a moment..."
+            : "Connecting to ChallanGo..."}
+        </Text>
+        {showWakingMessage && (
+          <Text size="xs" c="var(--c-text-muted, #94A3B8)" style={{ lineHeight: 1.4 }}>
+            Render free tier backend is spinning up from idle state (takes ~30-50s). Please hold on!
+          </Text>
+        )}
+      </Stack>
+    </Center>
+  );
+};
+
 // Protected route wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, token, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <Center style={{ minHeight: "100vh", backgroundColor: "var(--c-bg)" }}>
-        <Loader size="lg" color="blue" type="dots" />
-      </Center>
-    );
+    return <LoadingScreen />;
   }
 
   if (!token && !user) {
@@ -79,11 +126,7 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, token, isLoading, isAdmin } = useAuth();
 
   if (isLoading) {
-    return (
-      <Center style={{ minHeight: "100vh", backgroundColor: "var(--c-bg)" }}>
-        <Loader size="lg" color="blue" type="dots" />
-      </Center>
-    );
+    return <LoadingScreen />;
   }
 
   if (!token && !user) {
@@ -102,11 +145,7 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, token, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <Center style={{ minHeight: "100vh", backgroundColor: "#0F172A" }}>
-        <Loader size="lg" color="blue" type="dots" />
-      </Center>
-    );
+    return <LoadingScreen />;
   }
 
   if (token || user) {
@@ -155,6 +194,34 @@ function App() {
                       <ProtectedRoute>
                         <Layout>
                           <ImportPage />
+                        </Layout>
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  {/* Protected parties catalog route */}
+                  <Route
+                    path="/parties"
+                    element={
+                      <ProtectedRoute>
+                        <Layout>
+                          <PartiesPage />
+                        </Layout>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/parties"
+                    element={<Navigate to="/parties" replace />}
+                  />
+
+                  {/* Protected user profile & company settings route */}
+                  <Route
+                    path="/profile"
+                    element={
+                      <ProtectedRoute>
+                        <Layout>
+                          <ProfilePage />
                         </Layout>
                       </ProtectedRoute>
                     }

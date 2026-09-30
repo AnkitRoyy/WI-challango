@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatIndianCurrency, formatDate } from "./formatters";
+import { formatIndianCurrency, formatDate, amountInWordsIndian } from "./formatters";
 
 describe("formatIndianCurrency", () => {
   it("formats zero and empty values as Rs. 0.00", () => {
@@ -40,5 +40,19 @@ describe("formatDate", () => {
     expect(formatDate(undefined)).toBe("-");
     expect(formatDate("")).toBe("-");
     expect(formatDate("not-a-date")).toBe("-");
+  });
+});
+
+describe("amountInWordsIndian", () => {
+  it("converts 0 and empty values to Zero Rupees Only", () => {
+    expect(amountInWordsIndian(0)).toBe("Zero Rupees Only");
+    expect(amountInWordsIndian(null)).toBe("Zero Rupees Only");
+    expect(amountInWordsIndian("")).toBe("Zero Rupees Only");
+  });
+
+  it("converts numbers to Indian Rupees in words", () => {
+    expect(amountInWordsIndian(24640)).toBe("Twenty Four Thousand Six Hundred Forty Rupees Only");
+    expect(amountInWordsIndian(125000)).toBe("One Lakh Twenty Five Thousand Rupees Only");
+    expect(amountInWordsIndian(5.5)).toBe("Five Rupees and Fifty Paise Only");
   });
 });

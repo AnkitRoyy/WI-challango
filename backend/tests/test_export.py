@@ -28,17 +28,21 @@ def test_export_xlsx_all_entries_headers_and_columns(client, staff_headers):
 
     # Verify exact headers
     expected_headers = [
-        "Serial No",
         "Challan No",
         "Vehicle No",
+        "Party",
         "Product",
         "Destination",
         "Quantity",
         "Unit Price",
+        "Subtotal",
+        "GST Type",
+        "GST Rate (%)",
+        "GST Amount",
         "Total Price",
         "Created At",
     ]
-    actual_headers = [ws.cell(row=1, column=col).value for col in range(1, 10)]
+    actual_headers = [ws.cell(row=1, column=col).value for col in range(1, 14)]
     assert actual_headers == expected_headers
 
     # Verify at least one row exists and count matches DB active records
@@ -75,13 +79,17 @@ def test_export_csv_matching_rows_with_list_endpoint(client, staff_headers):
     # 1 header row + expected_count data rows
     assert len(rows) == expected_count + 1
     assert rows[0] == [
-        "Serial No",
         "Challan No",
         "Vehicle No",
+        "Party",
         "Product",
         "Destination",
         "Quantity",
         "Unit Price",
+        "Subtotal",
+        "GST Type",
+        "GST Rate (%)",
+        "GST Amount",
         "Total Price",
         "Created At",
     ]
@@ -121,10 +129,10 @@ def test_export_xlsx_numeric_formats_and_types(client, staff_headers):
     wb = openpyxl.load_workbook(io.BytesIO(response.content))
     ws = wb.active
 
-    # Row 2 (first data row)
+    # Row 2 (first data row): Quantity is col 6, Unit Price is col 7, Total Price is col 12
     qty_cell = ws.cell(row=2, column=6)
     unit_price_cell = ws.cell(row=2, column=7)
-    total_price_cell = ws.cell(row=2, column=8)
+    total_price_cell = ws.cell(row=2, column=12)
 
     # Check numeric types, NOT string
     assert isinstance(qty_cell.value, (int, float))
@@ -141,11 +149,9 @@ def test_export_formula_injection_protection(client, staff_headers):
     unique_id = uuid.uuid4().hex[:6]
     # Create an entry with malicious formula prefixes
     dangerous_product = "=CMD('calc')|'test'"
-    dangerous_serial = "+998877"
     create_resp = client.post(
         "/api/v1/entries",
         json={
-            "serial_no": dangerous_serial,
             "challan_no": f"CH-INJ-{unique_id}",
             "vehicle_no": "DL01AB8888",
             "product": dangerous_product,
@@ -167,9 +173,7 @@ def test_export_formula_injection_protection(client, staff_headers):
     csv_content = csv_resp.content.decode("utf-8-sig")
     csv_rows = list(csv.reader(io.StringIO(csv_content)))
     assert len(csv_rows) == 2  # header + 1 row
-    # Serial should start with '
-    assert csv_rows[1][0] == f"'{dangerous_serial}"
-    # Product should start with '
+    # Product is index 3
     assert csv_rows[1][3] == f"'{dangerous_product}"
 
     # 2. Check XLSX export
@@ -181,7 +185,7 @@ def test_export_formula_injection_protection(client, staff_headers):
     assert xlsx_resp.status_code == 200
     wb = openpyxl.load_workbook(io.BytesIO(xlsx_resp.content))
     ws = wb.active
-    assert ws.cell(row=2, column=1).value == f"'{dangerous_serial}"
+    # Product is column 4
     assert ws.cell(row=2, column=4).value == f"'{dangerous_product}"
 
 
@@ -204,7 +208,7 @@ def test_export_zero_matching_rows_returns_valid_headers_file(client, staff_head
     ws = wb.active
     # Header row only
     assert ws.max_row == 1
-    assert ws.cell(row=1, column=1).value == "Serial No"
+    assert ws.cell(row=1, column=1).value == "Challan No"
 
 
 def test_export_creates_audit_log(client, staff_headers, db):

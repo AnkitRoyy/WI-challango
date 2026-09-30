@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Box,
   Paper,
@@ -12,8 +12,6 @@ import {
   Badge,
   ActionIcon,
   Tooltip,
-  Pagination,
-  Select,
   Alert,
   Skeleton,
   SimpleGrid,
@@ -21,6 +19,7 @@ import {
   UnstyledButton,
   Drawer,
   Menu,
+  Loader,
   useMantineColorScheme,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
@@ -47,8 +46,10 @@ import {
   IconDotsVertical,
   IconRefresh,
   IconX,
+  IconPrinter,
+  IconBrandWhatsapp,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import dayjs from "dayjs";
 
@@ -63,6 +64,7 @@ import { formatIndianCurrency, formatDate } from "../utils/formatters";
 import { useAuth } from "../context/AuthContext";
 import { EntryFormModal } from "../components/EntryFormModal";
 import { DeleteConfirmModal } from "../components/DeleteConfirmModal";
+import { ChallanPrintModal } from "../components/ChallanPrintModal";
 
 export const EntriesPage: React.FC = () => {
   const { isAdmin } = useAuth();
@@ -71,8 +73,6 @@ export const EntriesPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Read URL query parameters with fallbacks
-  const urlPage = parseInt(searchParams.get("page") || "1", 10);
-  const urlPageSize = parseInt(searchParams.get("page_size") || "10", 10);
   const urlQ = searchParams.get("q") || "";
   const urlSortBy = searchParams.get("sort_by") || "created_at";
   const urlSortDir = (searchParams.get("sort_dir") || "desc") as "asc" | "desc";
@@ -92,30 +92,12 @@ export const EntriesPage: React.FC = () => {
   // Pull-to-refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Accumulated entries for mobile infinite scroll
-  const [mobileEntries, setMobileEntries] = useState<Entry[]>([]);
-
-  // Sentinel ref for infinite scroll
-  const infiniteScrollSentinelRef = useRef<HTMLDivElement | null>(null);
-
-  // Tracks the "filter key" — when any filter besides page changes, clear the list
-  const filterKey = useMemo(
-    () =>
-      [urlQ, urlSortBy, urlSortDir, urlDateFrom, urlDateTo, urlProduct, urlVehicleNo, urlDestination, urlPageSize].join("|"),
-    [urlQ, urlSortBy, urlSortDir, urlDateFrom, urlDateTo, urlProduct, urlVehicleNo, urlDestination, urlPageSize]
-  );
-
-  // Sync debounced search with URL
-  useEffect(() => {
-    if (debouncedSearch !== urlQ) {
-      updateFilters({ q: debouncedSearch, page: 1 });
-    }
-  }, [debouncedSearch]);
-
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [selectedEntryForEdit, setSelectedEntryForEdit] = useState<Entry | null>(null);
   const [entryToDelete, setEntryToDelete] = useState<Entry | null>(null);
+  const [challanToPrint, setChallanToPrint] = useState<Entry | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   // Export loading state
   const [isExportingXlsx, setIsExportingXlsx] = useState(false);
@@ -139,6 +121,13 @@ export const EntriesPage: React.FC = () => {
     setSearchParams(current);
   };
 
+  // Sync debounced search with URL
+  useEffect(() => {
+    if (debouncedSearch !== urlQ) {
+      updateFilters({ q: debouncedSearch, page: 1 });
+    }
+  }, [debouncedSearch]);
+
   // Convert string dates to DatePickerInput format [Date | null, Date | null]
   const dateRangeValue: [Date | null, Date | null] = useMemo(() => {
     const from = urlDateFrom ? dayjs(urlDateFrom).toDate() : null;
@@ -146,11 +135,30 @@ export const EntriesPage: React.FC = () => {
     return [from, to];
   }, [urlDateFrom, urlDateTo]);
 
-  // Current active filters object
-  const currentFilters: EntryFilters = useMemo(
+  // Summary totals (uses same filter without pagination)
+  const summaryFilters: EntryFilters = useMemo(
     () => ({
-      page: urlPage,
-      page_size: urlPageSize,
+      q: urlQ || undefined,
+      date_from: urlDateFrom || undefined,
+      date_to: urlDateTo || undefined,
+      product: urlProduct || undefined,
+      vehicle_no: urlVehicleNo || undefined,
+      destination: urlDestination || undefined,
+    }),
+    [urlQ, urlDateFrom, urlDateTo, urlProduct, urlVehicleNo, urlDestination]
+  );
+
+  const summaryQuery = useQuery({
+    queryKey: ["entries-summary", summaryFilters],
+    queryFn: () => fetchEntriesSummary(summaryFilters),
+  });
+
+  // ── Unified Infinite Scroll Query (Both Desktop & Mobile) ──
+  const PAGE_SIZE = 25;
+
+  const infiniteFilters = useMemo(
+    () => ({
+      page_size: PAGE_SIZE,
       sort_by: urlSortBy,
       sort_dir: urlSortDir,
       q: urlQ || undefined,
@@ -160,83 +168,77 @@ export const EntriesPage: React.FC = () => {
       vehicle_no: urlVehicleNo || undefined,
       destination: urlDestination || undefined,
     }),
-    [
-      urlPage,
-      urlPageSize,
-      urlSortBy,
-      urlSortDir,
-      urlQ,
-      urlDateFrom,
-      urlDateTo,
-      urlProduct,
-      urlVehicleNo,
-      urlDestination,
-    ]
+    [urlSortBy, urlSortDir, urlQ, urlDateFrom, urlDateTo, urlProduct, urlVehicleNo, urlDestination]
   );
 
-  // Fetch entries query
-  const entriesQuery = useQuery({
-    queryKey: ["entries", currentFilters],
-    queryFn: () => fetchEntries(currentFilters),
-    placeholderData: (prev) => prev,
+  const {
+    data: infiniteData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: isEntriesLoading,
+    isError: isEntriesError,
+    error: entriesError,
+    refetch: refetchEntries,
+  } = useInfiniteQuery({
+    queryKey: ["entries", "infinite", infiniteFilters],
+    queryFn: ({ pageParam = 1 }) =>
+      fetchEntries({
+        ...infiniteFilters,
+        page: pageParam as number,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      if (lastPage.page < lastPage.total_pages) {
+        return lastPage.page + 1;
+      }
+      return undefined;
+    },
   });
 
-  // Fetch summary totals query
-  const summaryQuery = useQuery({
-    queryKey: ["entries-summary", currentFilters],
-    queryFn: () => fetchEntriesSummary(currentFilters),
-  });
-
-  // When filter key changes (not page), reset accumulated list
-  const prevFilterKey = useRef(filterKey);
-  useEffect(() => {
-    if (prevFilterKey.current !== filterKey) {
-      prevFilterKey.current = filterKey;
-      setMobileEntries([]);
+  // Flat, deduplicated list of all items loaded across all pages
+  const allEntries: Entry[] = useMemo(() => {
+    if (!infiniteData?.pages) return [];
+    const seen = new Set<number>();
+    const list: Entry[] = [];
+    for (const page of infiniteData.pages) {
+      for (const item of page.items) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          list.push(item);
+        }
+      }
     }
-  }, [filterKey]);
+    return list;
+  }, [infiniteData?.pages]);
 
-  // Append pages to accumulated list
+  // Sentinels for mobile and desktop views
+  const mobileSentinelRef = useRef<HTMLDivElement | null>(null);
+  const desktopSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-fetch next page as user scrolls down near either sentinel
   useEffect(() => {
-    if (!entriesQuery.data?.items) return;
-    if (urlPage === 1) {
-      setMobileEntries(entriesQuery.data.items);
-    } else {
-      setMobileEntries((prev) => {
-        const existingIds = new Set(prev.map((e) => e.id));
-        const next = entriesQuery.data?.items.filter((e) => !existingIds.has(e.id)) || [];
-        return [...prev, ...next];
-      });
-    }
-  }, [entriesQuery.data?.items, urlPage]);
-
-  // Infinite scroll: load next page when sentinel enters viewport
-  const hasMore =
-    entriesQuery.data != null &&
-    mobileEntries.length < entriesQuery.data.total_count;
-
-  const loadNextPage = useCallback(() => {
-    if (!entriesQuery.isFetching && hasMore) {
-      updateFilters({ page: urlPage + 1 });
-    }
-  }, [entriesQuery.isFetching, hasMore, urlPage]);
-
-  useEffect(() => {
-    const sentinel = infiniteScrollSentinelRef.current;
-    if (!sentinel) return;
+    if (!hasNextPage) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) {
-          loadNextPage();
+        const isIntersecting = entries.some((e) => e.isIntersecting);
+        if (isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
         }
       },
-      { rootMargin: "300px" } // Trigger 300px before sentinel enters view
+      { rootMargin: "400px" }
     );
 
-    observer.observe(sentinel);
+    if (mobileSentinelRef.current) {
+      observer.observe(mobileSentinelRef.current);
+    }
+    if (desktopSentinelRef.current) {
+      observer.observe(desktopSentinelRef.current);
+    }
+
     return () => observer.disconnect();
-  }, [loadNextPage]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, allEntries.length]);
 
   // Sort toggler
   const handleSort = (field: string) => {
@@ -265,7 +267,7 @@ export const EntriesPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const { blob, filename } = await exportEntriesApi(currentFilters, format);
+      const { blob, filename } = await exportEntriesApi(infiniteFilters, format);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -296,8 +298,6 @@ export const EntriesPage: React.FC = () => {
   const handleClearFilters = () => {
     setSearchInput("");
     setSearchParams({
-      page: "1",
-      page_size: String(urlPageSize),
       sort_by: "created_at",
       sort_dir: "desc",
     });
@@ -308,7 +308,7 @@ export const EntriesPage: React.FC = () => {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await Promise.all([entriesQuery.refetch(), summaryQuery.refetch()]);
+      await Promise.all([refetchEntries(), summaryQuery.refetch()]);
       notifications.show({
         title: "Refreshed",
         message: "Entries updated to latest state",
@@ -329,7 +329,7 @@ export const EntriesPage: React.FC = () => {
     (urlVehicleNo ? 1 : 0);
 
   const isFiltered = Boolean(urlQ || activeFiltersCount > 0);
-  const totalEntriesCount = summaryQuery.data?.count ?? 0;
+  const totalEntriesCount = infiniteData?.pages[0]?.total_count ?? summaryQuery.data?.count ?? 0;
   const hasZeroResults = totalEntriesCount === 0;
 
   const cardBg = isDark ? "#1E293B" : "#FFFFFF";
@@ -379,7 +379,7 @@ export const EntriesPage: React.FC = () => {
                     leftSection={<IconFileSpreadsheet size={15} color="#16A34A" />}
                     loading={isExportingXlsx}
                     onClick={() => handleExport("xlsx")}
-                    disabled={hasZeroResults || entriesQuery.isLoading}
+                    disabled={hasZeroResults || isEntriesLoading}
                   >
                     Export XLSX
                   </Button>
@@ -395,7 +395,7 @@ export const EntriesPage: React.FC = () => {
                     leftSection={<IconFileText size={15} color="#2563EB" />}
                     loading={isExportingCsv}
                     onClick={() => handleExport("csv")}
-                    disabled={hasZeroResults || entriesQuery.isLoading}
+                    disabled={hasZeroResults || isEntriesLoading}
                   >
                     Export CSV
                   </Button>
@@ -629,7 +629,7 @@ export const EntriesPage: React.FC = () => {
         <Group gap="xs" wrap="nowrap">
           {/* Main Search Input (Always Visible) */}
           <TextInput
-            placeholder="Search serial, challan, vehicle, product..."
+            placeholder="Search challan, vehicle, product, destination..."
             leftSection={<IconSearch size={16} color="#94A3B8" />}
             value={searchInput}
             onChange={(e) => setSearchInput(e.currentTarget.value)}
@@ -811,11 +811,11 @@ export const EntriesPage: React.FC = () => {
 
       {/* ── MOBILE CARD LIST VIEW ── */}
       <Box hiddenFrom="sm">
-        {entriesQuery.isError ? (
+        {isEntriesError ? (
           <Alert icon={<IconAlertCircle size={20} />} title="Error" color="red">
-            {(entriesQuery.error as any)?.message || "Failed to load entries."}
+            {(entriesError as any)?.message || "Failed to load entries."}
           </Alert>
-        ) : entriesQuery.isLoading && urlPage === 1 ? (
+        ) : isEntriesLoading ? (
           // Mobile Skeleton cards
           <Stack gap="xs">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -838,7 +838,7 @@ export const EntriesPage: React.FC = () => {
               </Card>
             ))}
           </Stack>
-        ) : mobileEntries.length === 0 ? (
+        ) : allEntries.length === 0 ? (
           // Empty State
           <Paper
             withBorder
@@ -876,7 +876,7 @@ export const EntriesPage: React.FC = () => {
           </Paper>
         ) : (
           <Stack gap="xs">
-            {mobileEntries.map((entry) => (
+            {allEntries.map((entry) => (
               <Card
                 key={entry.id}
                 withBorder
@@ -895,14 +895,28 @@ export const EntriesPage: React.FC = () => {
                   setIsFormModalOpen(true);
                 }}
               >
-                {/* Line 1: Product Name + Total Price */}
+                {/* Line 1: Product Name, Party + Total Price & GST */}
                 <Group justify="space-between" align="flex-start" wrap="nowrap" mb={4}>
-                  <Text fw={700} size="sm" c={textPrimary} lineClamp={1} style={{ flex: 1 }}>
-                    {entry.product}
-                  </Text>
-                  <Text fw={800} size="md" c="#2563EB" style={{ whiteSpace: "nowrap" }}>
-                    {formatIndianCurrency(entry.total_price)}
-                  </Text>
+                  <Box style={{ flex: 1, minWidth: 0 }}>
+                    <Text fw={700} size="sm" c={textPrimary} lineClamp={1}>
+                      {entry.product}
+                    </Text>
+                    {entry.party_name && (
+                      <Text size="xs" fw={500} c="blue.6" lineClamp={1}>
+                        👤 {entry.party_name}
+                      </Text>
+                    )}
+                  </Box>
+                  <Box ta="right">
+                    <Text fw={800} size="md" c="#2563EB" style={{ whiteSpace: "nowrap" }}>
+                      {formatIndianCurrency(entry.total_price)}
+                    </Text>
+                    {entry.gst_type && entry.gst_type !== "none" && (
+                      <Badge size="xs" variant="light" color="blue" p={4} mt={2}>
+                        +{entry.gst_rate}% GST
+                      </Badge>
+                    )}
+                  </Box>
                 </Group>
 
                 {/* Line 2: Challan No, Vehicle No, Qty & Rate */}
@@ -911,6 +925,11 @@ export const EntriesPage: React.FC = () => {
                     <Text size="xs" fw={600} c={textMuted}>
                       {entry.challan_no}
                     </Text>
+                    {entry.challan_series === "party" && (
+                      <Badge variant="light" color="violet" size="xs">
+                        Buyer
+                      </Badge>
+                    )}
                     <Badge variant="outline" color="gray" size="xs" ff="monospace">
                       {entry.vehicle_no}
                     </Badge>
@@ -948,6 +967,24 @@ export const EntriesPage: React.FC = () => {
                     </Menu.Target>
                     <Menu.Dropdown onClick={(e) => e.stopPropagation()}>
                       <Menu.Item
+                        leftSection={<IconPrinter size={14} />}
+                        onClick={() => {
+                          setChallanToPrint(entry);
+                          setIsPrintModalOpen(true);
+                        }}
+                      >
+                        Print Challan
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconBrandWhatsapp size={14} color="#25D366" />}
+                        onClick={() => {
+                          setChallanToPrint(entry);
+                          setIsPrintModalOpen(true);
+                        }}
+                      >
+                        Share via WhatsApp
+                      </Menu.Item>
+                      <Menu.Item
                         leftSection={<IconEdit size={14} />}
                         onClick={() => {
                           setSelectedEntryForEdit(entry);
@@ -971,19 +1008,36 @@ export const EntriesPage: React.FC = () => {
               </Card>
             ))}
 
-            {/* Infinite scroll sentinel + bottom indicator */}
-            <Box ref={infiniteScrollSentinelRef} style={{ height: 1 }} />
+            {/* Mobile Infinite scroll sentinel */}
+            <Box ref={mobileSentinelRef} style={{ height: 1 }} />
 
             {/* Loading spinner shown while fetching next page */}
-            {entriesQuery.isFetching && urlPage > 1 && (
+            {isFetchingNextPage && (
               <Box ta="center" py="sm">
-                <Text size="xs" c={textMuted}>Loading more entries…</Text>
+                <Group justify="center" gap="xs">
+                  <Loader size="xs" color="blue" />
+                  <Text size="xs" c={textMuted}>Loading more entries…</Text>
+                </Group>
               </Box>
             )}
 
-            {!hasMore && entriesQuery.data && entriesQuery.data.total_count > 0 && (
+            {/* Manual load more button as an accessible affordance */}
+            {hasNextPage && !isFetchingNextPage && (
+              <Box ta="center" py="xs">
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  color="blue"
+                  onClick={() => fetchNextPage()}
+                >
+                  Load more entries ({totalEntriesCount - allEntries.length} left)
+                </Button>
+              </Box>
+            )}
+
+            {!hasNextPage && totalEntriesCount > 0 && (
               <Text size="xs" c={textMuted} ta="center" py="xs">
-                ✓ All {entriesQuery.data.total_count} entries loaded
+                ✓ All {totalEntriesCount} entries loaded
               </Text>
             )}
           </Stack>
@@ -1001,10 +1055,10 @@ export const EntriesPage: React.FC = () => {
             overflow: "hidden",
           }}
         >
-          {entriesQuery.isError ? (
+          {isEntriesError ? (
             <Box p="xl">
               <Alert icon={<IconAlertCircle size={20} />} title="Error" color="red">
-                {(entriesQuery.error as any)?.message || "Failed to retrieve delivery entries."}
+                {(entriesError as any)?.message || "Failed to retrieve delivery entries."}
               </Alert>
             </Box>
           ) : (
@@ -1018,17 +1072,6 @@ export const EntriesPage: React.FC = () => {
               >
                 <Table.Thead style={{ backgroundColor: isDark ? "#0F172A" : "#F8FAFC" }}>
                   <Table.Tr>
-                    <Table.Th style={{ width: 110 }}>
-                      <UnstyledButton onClick={() => handleSort("serial_no")} w="100%">
-                        <Group justify="space-between" gap={4} wrap="nowrap">
-                          <Text size="xs" fw={700} c={urlSortBy === "serial_no" ? "blue.6" : textMuted}>
-                            Serial No
-                          </Text>
-                          {getSortIcon("serial_no")}
-                        </Group>
-                      </UnstyledButton>
-                    </Table.Th>
-
                     <Table.Th style={{ width: 140 }}>
                       <UnstyledButton onClick={() => handleSort("challan_no")} w="100%">
                         <Group justify="space-between" gap={4} wrap="nowrap">
@@ -1049,6 +1092,12 @@ export const EntriesPage: React.FC = () => {
                           {getSortIcon("vehicle_no")}
                         </Group>
                       </UnstyledButton>
+                    </Table.Th>
+
+                    <Table.Th style={{ width: 140 }}>
+                      <Text size="xs" fw={700} c={textMuted}>
+                        Party
+                      </Text>
                     </Table.Th>
 
                     <Table.Th>
@@ -1126,7 +1175,7 @@ export const EntriesPage: React.FC = () => {
                 </Table.Thead>
 
                 <Table.Tbody>
-                  {entriesQuery.isLoading ? (
+                  {isEntriesLoading ? (
                     Array.from({ length: 8 }).map((_, idx) => (
                       <Table.Tr key={`skeleton-${idx}`}>
                         <Table.Td><Skeleton height={20} radius="xs" /></Table.Td>
@@ -1141,7 +1190,7 @@ export const EntriesPage: React.FC = () => {
                         <Table.Td><Skeleton height={20} radius="xs" /></Table.Td>
                       </Table.Tr>
                     ))
-                  ) : entriesQuery.data?.items?.length === 0 ? (
+                  ) : allEntries.length === 0 ? (
                     <Table.Tr>
                       <Table.Td colSpan={10}>
                         <Box py={50} ta="center">
@@ -1175,21 +1224,28 @@ export const EntriesPage: React.FC = () => {
                       </Table.Td>
                     </Table.Tr>
                   ) : (
-                    entriesQuery.data?.items.map((entry) => (
+                    allEntries.map((entry) => (
                       <Table.Tr key={entry.id}>
                         <Table.Td>
-                          <Badge variant="outline" color="gray" size="sm">
-                            {entry.serial_no}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text fw={600} size="sm" c={textPrimary}>
-                            {entry.challan_no}
-                          </Text>
+                          <Group gap={6} wrap="nowrap">
+                            <Text fw={600} size="sm" c={textPrimary}>
+                              {entry.challan_no}
+                            </Text>
+                            {entry.challan_series === "party" && (
+                              <Badge size="xs" variant="light" color="violet">
+                                Buyer
+                              </Badge>
+                            )}
+                          </Group>
                         </Table.Td>
                         <Table.Td>
                           <Text size="sm" ff="monospace" fw={600} c={textPrimary}>
                             {entry.vehicle_no}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" c={entry.party_name ? textPrimary : textMuted} fw={500} lineClamp={1}>
+                            {entry.party_name || "—"}
                           </Text>
                         </Table.Td>
                         <Table.Td>
@@ -1221,6 +1277,11 @@ export const EntriesPage: React.FC = () => {
                           <Text size="sm" fw={700} c="#2563EB">
                             {formatIndianCurrency(entry.total_price)}
                           </Text>
+                          {entry.gst_type && entry.gst_type !== "none" && (
+                            <Badge size="xs" variant="light" color="blue" ml={4}>
+                              +{entry.gst_rate}% GST
+                            </Badge>
+                          )}
                         </Table.Td>
                         <Table.Td>
                           <Text size="xs" c={textMuted}>
@@ -1229,6 +1290,34 @@ export const EntriesPage: React.FC = () => {
                         </Table.Td>
                         <Table.Td>
                           <Group gap={4} justify="center" wrap="nowrap">
+                            <Tooltip label="Print thermal challan (Epson TM-P80)">
+                              <ActionIcon
+                                variant="subtle"
+                                color="teal"
+                                size="sm"
+                                onClick={() => {
+                                  setChallanToPrint(entry);
+                                  setIsPrintModalOpen(true);
+                                }}
+                              >
+                                <IconPrinter size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+
+                            <Tooltip label="Share on WhatsApp">
+                              <ActionIcon
+                                variant="subtle"
+                                color="green"
+                                size="sm"
+                                onClick={() => {
+                                  setChallanToPrint(entry);
+                                  setIsPrintModalOpen(true);
+                                }}
+                              >
+                                <IconBrandWhatsapp size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+
                             <Tooltip label="Edit entry">
                               <ActionIcon
                                 variant="subtle"
@@ -1271,8 +1360,21 @@ export const EntriesPage: React.FC = () => {
             </Box>
           )}
 
-          {/* Desktop Pagination Footer */}
-          {entriesQuery.data && entriesQuery.data.total_count > 0 && (
+          {/* Desktop Infinite Scroll Sentinel */}
+          <Box ref={desktopSentinelRef} style={{ height: 1 }} />
+
+          {/* Loading indicator when fetching next batch */}
+          {isFetchingNextPage && (
+            <Box ta="center" py="md">
+              <Group justify="center" gap="xs">
+                <Loader size="xs" color="blue" />
+                <Text size="xs" c={textMuted}>Loading more entries…</Text>
+              </Group>
+            </Box>
+          )}
+
+          {/* Desktop Infinite Scroll Footer */}
+          {totalEntriesCount > 0 && (
             <Group
               justify="space-between"
               align="center"
@@ -1286,38 +1388,31 @@ export const EntriesPage: React.FC = () => {
             >
               <Group gap="xs">
                 <Text size="xs" c={textMuted}>
-                  Showing{" "}
-                  <b>
-                    {(entriesQuery.data.page - 1) * entriesQuery.data.page_size + 1}-
-                    {Math.min(
-                      entriesQuery.data.page * entriesQuery.data.page_size,
-                      entriesQuery.data.total_count
-                    )}
-                  </b>{" "}
-                  of <b>{entriesQuery.data.total_count}</b> entries
+                  Showing <b>{allEntries.length}</b> of <b>{totalEntriesCount}</b> entries
                 </Text>
-                <Select
-                  size="xs"
-                  w={80}
-                  value={String(urlPageSize)}
-                  data={["10", "20", "50", "100"]}
-                  onChange={(val) => {
-                    if (val) updateFilters({ page_size: parseInt(val, 10), page: 1 });
-                  }}
-                />
-                <Text size="xs" c={textMuted}>
-                  per page
-                </Text>
+                {isFetchingNextPage && (
+                  <Badge size="xs" variant="light" color="blue">
+                    Loading...
+                  </Badge>
+                )}
+                {!hasNextPage && (
+                  <Badge size="xs" variant="light" color="teal">
+                    ✓ All {totalEntriesCount} entries loaded
+                  </Badge>
+                )}
               </Group>
 
-              <Pagination
-                total={entriesQuery.data.total_pages}
-                value={entriesQuery.data.page}
-                onChange={(newPage) => updateFilters({ page: newPage })}
-                size="sm"
-                radius="md"
-                color="blue"
-              />
+              {hasNextPage && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  color="blue"
+                  onClick={() => fetchNextPage()}
+                  loading={isFetchingNextPage}
+                >
+                  Load next batch ({totalEntriesCount - allEntries.length} remaining)
+                </Button>
+              )}
             </Group>
           )}
         </Paper>
@@ -1336,6 +1431,15 @@ export const EntriesPage: React.FC = () => {
         opened={Boolean(entryToDelete)}
         onClose={() => setEntryToDelete(null)}
         entry={entryToDelete}
+      />
+
+      <ChallanPrintModal
+        opened={isPrintModalOpen}
+        onClose={() => {
+          setIsPrintModalOpen(false);
+          setChallanToPrint(null);
+        }}
+        entry={challanToPrint}
       />
     </Box>
   );

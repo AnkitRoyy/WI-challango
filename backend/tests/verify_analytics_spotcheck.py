@@ -33,7 +33,6 @@ async def test_spotcheck_analytics_vs_entries_summary():
         date_str = now.strftime("%Y-%m-%d")
         
         entry1 = Entry(
-            serial_no=f"SC-01-{int(now.timestamp())}",
             challan_no=f"CH-SC1-{int(now.timestamp())}",
             vehicle_no="DL01AB1234",
             product="Spotcheck Rods",
@@ -46,7 +45,6 @@ async def test_spotcheck_analytics_vs_entries_summary():
             updated_by=admin_user.id,
         )
         entry2 = Entry(
-            serial_no=f"SC-02-{int(now.timestamp())}",
             challan_no=f"CH-SC2-{int(now.timestamp())}",
             vehicle_no="HR02CD5678",
             product="Spotcheck Cement",

@@ -42,6 +42,20 @@ def create_user(
         is_active=True,
     )
     db.add(new_user)
+    db.flush()
+
+    db.add(AuditLog(
+        user_id=current_admin.id,
+        action="create_user",
+        entry_id=None,
+        details={
+            "entity": "user",
+            "new_user_id": new_user.id,
+            "new_user_email": new_user.email,
+            "new_user_name": new_user.name,
+            "role": new_user.role,
+        },
+    ))
     db.commit()
     db.refresh(new_user)
 
@@ -101,6 +115,19 @@ def deactivate_user(
         )
 
     user.is_active = False
+
+    db.add(AuditLog(
+        user_id=current_admin.id,
+        action="deactivate_user",
+        entry_id=None,
+        details={
+            "entity": "user",
+            "target_user_id": user.id,
+            "target_user_email": user.email,
+            "target_user_name": user.name,
+            "role": user.role,
+        },
+    ))
     db.commit()
     db.refresh(user)
 
@@ -160,6 +187,19 @@ def hard_delete_user(
             detail="This user has existing records and cannot be permanently deleted. Deactivate them instead.",
         )
 
+    # Log before delete so we can reference user details
+    db.add(AuditLog(
+        user_id=current_admin.id,
+        action="delete_user",
+        entry_id=None,
+        details={
+            "entity": "user",
+            "deleted_user_id": user.id,
+            "deleted_user_email": user.email,
+            "deleted_user_name": user.name,
+            "role": user.role,
+        },
+    ))
     db.delete(user)
     db.commit()
 

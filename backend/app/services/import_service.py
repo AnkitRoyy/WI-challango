@@ -1,4 +1,5 @@
 import io
+import csv
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -22,22 +23,25 @@ from app.schemas.import_schema import (
     ImportPreviewResponse,
     ImportCommitResponse,
 )
-from app.services.entry_service import log_entry_audit
+from app.services.entry_service import log_entry_audit, compute_entry_pricing
 from app.services.export_service import sanitize_formula_injection
 
 TEMPLATE_COLUMNS = [
-    "Serial No",
     "Challan No",
     "Vehicle No",
+    "Party",
     "Product",
     "Destination",
     "Quantity",
     "Unit Price",
+    "Subtotal",
+    "GST Type",
+    "GST Rate (%)",
+    "GST Amount",
     "Total Price",
 ]
 
 REQUIRED_HEADERS_LOWER = {
-    "serial no",
     "challan no",
     "vehicle no",
     "product",
@@ -49,7 +53,7 @@ REQUIRED_HEADERS_LOWER = {
 
 def generate_import_template() -> io.BytesIO:
     """
-    Generates a blank Excel template (.xlsx) with exact required headers,
+    Generates a blank Excel template (.xlsx) with exact required and optional headers,
     bold frozen header row, and one example row (italicized and grayed out)
     with a clear note indicating it should be deleted before uploading.
     """
@@ -67,20 +71,33 @@ def generate_import_template() -> io.BytesIO:
         cell = ws.cell(row=1, column=col_idx)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center" if col_idx in (1, 3) else "left", vertical="center")
+        cell.alignment = Alignment(horizontal="center" if col_idx in (2, 9) else "left", vertical="center")
 
     # Freeze header row
     ws.freeze_panes = "A2"
 
     # Example row (Row 2) - grayed out & italicized
-    example_values = ["SN001", "CH1001", "DL01AB1234", "Steel Rods 12mm", "Mumbai, Maharashtra", 10, 500.00, 5000.00]
+    example_values = [
+        "CH1001",
+        "DL01AB1234",
+        "Acme Enterprises",
+        "Steel Rods 12mm",
+        "Mumbai, Maharashtra",
+        10,
+        500.00,
+        5000.00,
+        "cgst_sgst",
+        18.00,
+        900.00,
+        5900.00,
+    ]
     ws.append(example_values)
 
     example_font = Font(name="Calibri", size=10, italic=True, color="7F7F7F")
     for col_idx in range(1, len(TEMPLATE_COLUMNS) + 1):
         cell = ws.cell(row=2, column=col_idx)
         cell.font = example_font
-        if col_idx in (6, 7, 8):
+        if col_idx in (6, 7, 8, 10, 11, 12):
             cell.number_format = "#,##0.00"
 
     # Add descriptive comment on cell A2
@@ -93,7 +110,7 @@ def generate_import_template() -> io.BytesIO:
     ws.cell(row=2, column=1).comment = comment
 
     # Set column widths
-    column_widths = [15, 18, 18, 30, 25, 15, 15, 16]
+    column_widths = [18, 18, 22, 28, 24, 14, 14, 15, 14, 14, 15, 16]
     for col_idx, width in enumerate(column_widths, start=1):
         col_letter = get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = width
@@ -102,6 +119,35 @@ def generate_import_template() -> io.BytesIO:
     wb.save(output)
     output.seek(0)
     return output
+
+
+def generate_import_csv_template() -> io.BytesIO:
+    """
+    Generates a blank CSV template (.csv) with exact column headers including Party and GST fields,
+    and one example row matching delivery challan requirements.
+    """
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(TEMPLATE_COLUMNS)
+    writer.writerow([
+        "CH1001",
+        "DL01AB1234",
+        "WEST INDUSTRIES",
+        "Steel Rods 12mm",
+        "Indore, Madhya Pradesh",
+        10,
+        500.00,
+        5000.00,
+        "cgst_sgst",
+        18.00,
+        900.00,
+        5900.00,
+    ])
+    mem = io.BytesIO()
+    mem.write(output.getvalue().encode("utf-8"))
+    mem.seek(0)
+    return mem
+
 
 
 def _clean_str(val: Any) -> str:
@@ -183,19 +229,23 @@ def parse_and_preview_import(
         )
 
     # Map column names
-    col_serial = col_mapping["serial no"]
     col_challan = col_mapping["challan no"]
     col_vehicle = col_mapping["vehicle no"]
     col_product = col_mapping["product"]
     col_destination = col_mapping["destination"]
     col_qty = col_mapping["quantity"]
     col_price = col_mapping["unit price"]
+    col_party = col_mapping.get("party") or col_mapping.get("party name")
+    col_subtotal = col_mapping.get("subtotal")
+    col_gst_type = col_mapping.get("gst type")
+    col_gst_rate = col_mapping.get("gst rate (%)") or col_mapping.get("gst rate")
+    col_gst_amount = col_mapping.get("gst amount")
     col_total = col_mapping.get("total price")
 
-    # Fetch active database entries for duplicate lookup
+    # Fetch active database entries for duplicate lookup (challan_no, product)
     active_db_entries = {
-        (c.strip().lower(), s.strip().lower()): c
-        for c, s in db.query(Entry.challan_no, Entry.serial_no).filter(Entry.is_deleted.is_(False)).all()
+        (c.strip().lower(), p.strip().lower()): c
+        for c, p in db.query(Entry.challan_no, Entry.product).filter(Entry.is_deleted.is_(False)).all()
     }
 
     seen_in_file: Dict[Tuple[str, str], int] = {}
@@ -211,17 +261,21 @@ def parse_and_preview_import(
         # Excel data row number (header is row 1)
         file_row_num = idx + 2
 
-        raw_serial = _clean_str(raw_row.get(col_serial))
         raw_challan = _clean_str(raw_row.get(col_challan))
         raw_vehicle = _clean_str(raw_row.get(col_vehicle))
         raw_product = _clean_str(raw_row.get(col_product))
         raw_destination = _clean_str(raw_row.get(col_destination))
         raw_qty = _clean_str(raw_row.get(col_qty))
         raw_unit_price = _clean_str(raw_row.get(col_price))
+        raw_party = _clean_str(raw_row.get(col_party)) if col_party else ""
+        raw_gst_type = _clean_str(raw_row.get(col_gst_type)) if col_gst_type else ""
+        raw_gst_rate = _clean_numeric_str(raw_row.get(col_gst_rate)) if col_gst_rate else None
+        raw_subtotal = _clean_numeric_str(raw_row.get(col_subtotal)) if col_subtotal else None
+        raw_gst_amount = _clean_numeric_str(raw_row.get(col_gst_amount)) if col_gst_amount else None
         raw_total_price = _clean_str(raw_row.get(col_total)) if col_total else None
 
         # Check if fully blank row
-        if not any([raw_serial, raw_challan, raw_vehicle, raw_product, raw_destination, raw_qty, raw_unit_price]):
+        if not any([raw_challan, raw_vehicle, raw_product, raw_destination, raw_qty, raw_unit_price, raw_party]):
             continue  # Skip fully blank rows silently
 
         row_index += 1
@@ -230,15 +284,13 @@ def parse_and_preview_import(
         is_db_duplicate = False
 
         # Formula injection sanitization on text fields
-        safe_serial = sanitize_formula_injection(raw_serial)
         safe_challan = sanitize_formula_injection(raw_challan)
         safe_vehicle = sanitize_formula_injection(raw_vehicle)
         safe_product = sanitize_formula_injection(raw_product)
         safe_destination = sanitize_formula_injection(raw_destination)
+        safe_party = sanitize_formula_injection(raw_party)
 
         # Presence checks
-        if not safe_serial:
-            row_errors.append("Serial No is required")
         if not safe_challan:
             row_errors.append("Challan No is required")
         if not safe_vehicle:
@@ -274,19 +326,65 @@ def parse_and_preview_import(
             except (InvalidOperation, ValueError):
                 row_errors.append("Unit Price is not a valid number")
 
-        # Calculate Total Price
-        computed_total: Optional[Decimal] = None
-        if parsed_qty is not None and parsed_qty > 0 and parsed_unit_price is not None and parsed_unit_price >= 0:
-            computed_total = (parsed_qty * parsed_unit_price).quantize(Decimal("0.01"))
+        # Validate GST Type
+        parsed_gst_type = "none"
+        if raw_gst_type:
+            gt_clean = raw_gst_type.lower()
+            if gt_clean in ("none", "no gst", "0", ""):
+                parsed_gst_type = "none"
+            elif gt_clean in ("cgst_sgst", "cgst+sgst", "cgst and sgst", "cgst/sgst", "cgst_and_sgst", "cgst + sgst"):
+                parsed_gst_type = "cgst_sgst"
+            elif gt_clean in ("igst",):
+                parsed_gst_type = "igst"
+            else:
+                row_errors.append(f"Invalid GST Type '{raw_gst_type}'. Must be 'none', 'cgst_sgst', or 'igst'")
 
-            # Check provided Total Price against computed Total Price
+        # Validate GST Rate
+        parsed_gst_rate: Optional[Decimal] = None
+        if raw_gst_rate is not None and raw_gst_rate != "":
+            try:
+                parsed_gst_rate = Decimal(raw_gst_rate)
+                if parsed_gst_rate < Decimal("0") or parsed_gst_rate > Decimal("100"):
+                    row_errors.append("GST Rate must be between 0 and 100")
+                    parsed_gst_rate = None
+            except (InvalidOperation, ValueError):
+                row_errors.append("GST Rate is not a valid number")
+                parsed_gst_rate = None
+
+        # Calculate Pricing and Discrepancies
+        computed_subtotal: Optional[Decimal] = None
+        computed_gst_amount: Optional[Decimal] = None
+        computed_total: Optional[Decimal] = None
+        effective_gst_type = parsed_gst_type
+        effective_gst_rate = parsed_gst_rate
+
+        if parsed_qty is not None and parsed_qty > 0 and parsed_unit_price is not None and parsed_unit_price >= 0:
+            computed_subtotal, effective_gst_type, effective_gst_rate, computed_gst_amount, computed_total = compute_entry_pricing(
+                quantity=parsed_qty,
+                unit_price=parsed_unit_price,
+                gst_type=parsed_gst_type,
+                gst_rate=parsed_gst_rate,
+            )
+
+            # Check provided Subtotal against computed Subtotal
+            if raw_subtotal is not None and raw_subtotal != "":
+                try:
+                    provided_subtotal = Decimal(raw_subtotal)
+                    if abs(provided_subtotal - computed_subtotal) > Decimal("0.05"):
+                        row_warnings.append(
+                            f"Subtotal does not match Quantity x Unit Price (expected {computed_subtotal:.2f}, got {provided_subtotal:.2f})"
+                        )
+                except (InvalidOperation, ValueError):
+                    pass
+
+            # Check provided Total Price against computed Total Price (Subtotal + GST Amount)
             total_price_str = _clean_numeric_str(raw_total_price)
             if total_price_str is not None and total_price_str != "":
                 try:
                     provided_total = Decimal(total_price_str)
                     if abs(provided_total - computed_total) > Decimal("0.05"):
                         row_warnings.append(
-                            f"Total Price does not match Quantity x Unit Price (expected {computed_total:.2f}, got {provided_total:.2f})"
+                            f"Total Price does not match Subtotal + GST Amount (expected {computed_total:.2f}, got {provided_total:.2f})"
                         )
                 except (InvalidOperation, ValueError):
                     row_warnings.append(f"Total Price is not a valid number; using computed value {computed_total:.2f}")
@@ -298,19 +396,19 @@ def parse_and_preview_import(
             if not is_valid_v and v_warning:
                 row_warnings.append(v_warning)
 
-        # Duplicate checking
-        if safe_challan and safe_serial:
-            pair_key = (safe_challan.lower(), safe_serial.lower())
+        # Duplicate checking on (Challan No, Product)
+        if safe_challan and safe_product:
+            pair_key = (safe_challan.lower(), safe_product.lower())
             if pair_key in seen_in_file:
                 row_errors.append(
-                    f"Duplicate (Challan No, Serial No) in file; previously seen on row {seen_in_file[pair_key]}"
+                    f"Duplicate (Challan No, Product) in file; previously seen on row {seen_in_file[pair_key]}"
                 )
             else:
                 seen_in_file[pair_key] = file_row_num
                 if pair_key in active_db_entries:
                     is_db_duplicate = True
                     row_warnings.append(
-                        f"Matches existing entry in database (Challan No '{safe_challan}', Serial No '{safe_serial}')"
+                        f"Matches existing entry in database (Challan No '{safe_challan}', Product '{safe_product}')"
                     )
 
         # Determine row status
@@ -332,13 +430,17 @@ def parse_and_preview_import(
             all_messages = []
 
         row_data = {
-            "serial_no": safe_serial,
             "challan_no": safe_challan,
             "vehicle_no": normalized_vehicle,
+            "party_name": safe_party if safe_party else None,
             "product": safe_product,
             "destination": safe_destination,
             "quantity": str(parsed_qty) if parsed_qty is not None else raw_qty,
             "unit_price": str(parsed_unit_price) if parsed_unit_price is not None else raw_unit_price,
+            "gst_type": effective_gst_type,
+            "gst_rate": str(effective_gst_rate) if effective_gst_rate is not None else None,
+            "subtotal": str(computed_subtotal) if computed_subtotal is not None else None,
+            "gst_amount": str(computed_gst_amount) if computed_gst_amount is not None else None,
             "total_price": str(computed_total) if computed_total is not None else None,
             "provided_total_price": str(raw_total_price) if raw_total_price is not None else None,
         }
@@ -444,21 +546,33 @@ def commit_import(
 
             qty = Decimal(str(data["quantity"]))
             unit_p = Decimal(str(data["unit_price"]))
-            server_total = (qty * unit_p).quantize(Decimal("0.01"))
+            raw_gt = data.get("gst_type")
+            raw_gr = Decimal(str(data["gst_rate"])) if data.get("gst_rate") is not None and str(data["gst_rate"]) != "" else None
+            subtotal, eff_type, eff_rate, gst_amt, server_total = compute_entry_pricing(
+                quantity=qty,
+                unit_price=unit_p,
+                gst_type=raw_gt,
+                gst_rate=raw_gr,
+            )
 
             dest = data.get("destination") or "Mumbai"
+            party_name = data.get("party_name")
 
             if r_status in ("ok", "warning"):
                 new_entry = Entry(
-                    serial_no=data["serial_no"],
                     challan_no=data["challan_no"],
                     vehicle_no=data["vehicle_no"],
+                    party_name=party_name,
                     product=data["product"],
                     destination=dest,
                     destination_lat=None,
                     destination_lng=None,
                     quantity=qty,
                     unit_price=unit_p,
+                    gst_type=eff_type,
+                    gst_rate=eff_rate,
+                    subtotal=subtotal,
+                    gst_amount=gst_amt,
                     total_price=server_total,
                     created_at=now,
                     updated_at=now,
@@ -477,18 +591,23 @@ def commit_import(
                         db.query(Entry)
                         .filter(
                             Entry.challan_no == data["challan_no"],
-                            Entry.serial_no == data["serial_no"],
+                            Entry.product == data["product"],
                             Entry.is_deleted.is_(False),
                         )
                         .first()
                     )
                     if existing:
                         existing.vehicle_no = data["vehicle_no"]
+                        existing.party_name = party_name
                         existing.product = data["product"]
                         if "destination" in data and data["destination"]:
                             existing.destination = data["destination"]
                         existing.quantity = qty
                         existing.unit_price = unit_p
+                        existing.gst_type = eff_type
+                        existing.gst_rate = eff_rate
+                        existing.subtotal = subtotal
+                        existing.gst_amount = gst_amt
                         existing.total_price = server_total
                         existing.updated_by = user_id
                         existing.updated_at = now
@@ -496,15 +615,19 @@ def commit_import(
                     else:
                         # Fallback: if not found, insert
                         new_entry = Entry(
-                            serial_no=data["serial_no"],
                             challan_no=data["challan_no"],
                             vehicle_no=data["vehicle_no"],
+                            party_name=party_name,
                             product=data["product"],
                             destination=dest,
                             destination_lat=None,
                             destination_lng=None,
                             quantity=qty,
                             unit_price=unit_p,
+                            gst_type=eff_type,
+                            gst_rate=eff_rate,
+                            subtotal=subtotal,
+                            gst_amount=gst_amt,
                             total_price=server_total,
                             created_at=now,
                             updated_at=now,

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">WI - ChallanGo</string>
+    <string name="title_activity_main">WI - ChallanGo</string>
+    <string name="package_name">com.challango.app</string>
+    <string name="custom_url_scheme">com.challango.app</string>
+</resources>

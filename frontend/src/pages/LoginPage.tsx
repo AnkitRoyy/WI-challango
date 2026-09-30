@@ -10,16 +10,31 @@ import {
   Group,
   Alert,
   Box,
-  Divider,
-  Badge,
+  ActionIcon,
+  useMantineColorScheme,
 } from "@mantine/core";
-import { IconMail, IconLock, IconAlertCircle, IconTruckDelivery } from "@tabler/icons-react";
+import {
+  IconMail,
+  IconLock,
+  IconAlertCircle,
+  IconTruckDelivery,
+  IconSun,
+  IconMoon,
+  IconShieldLock,
+} from "@tabler/icons-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useDarkTokens } from "../utils/useDarkTokens";
+import { useCapacitorNative } from "../utils/useCapacitorNative";
 
 export const LoginPage: React.FC = () => {
   const { user, login } = useAuth();
   const navigate = useNavigate();
+  const { toggleColorScheme } = useMantineColorScheme();
+  const t = useDarkTokens();
+
+  // Native status bar & back button handling
+  useCapacitorNative();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,7 +85,6 @@ export const LoginPage: React.FC = () => {
       await login(email.trim(), password);
       navigate("/entries", { replace: true });
     } catch (err: any) {
-      // Backend returns 401 with generic "Incorrect email or password"
       const msg =
         err?.response?.data?.detail ||
         (err?.response?.status === 401
@@ -82,14 +96,6 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleFillCredentials = (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setEmailError(null);
-    setPasswordError(null);
-    setServerError(null);
-  };
-
   return (
     <Box
       style={{
@@ -97,31 +103,59 @@ export const LoginPage: React.FC = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%)",
-        padding: "1rem",
+        background: t.isDark
+          ? "radial-gradient(ellipse at 50% -10%, #1E3A8A 0%, #0B1329 45%, #000000 85%)"
+          : "radial-gradient(ellipse at 50% -10%, #DBEAFE 0%, #EFF6FF 45%, #F8FAFC 85%)",
+        padding: "1.5rem 1rem",
+        position: "relative",
       }}
     >
-      <Container size={440} w="100%">
+      {/* Theme Toggle Button in top right */}
+      <ActionIcon
+        variant="default"
+        size="lg"
+        radius="md"
+        onClick={() => toggleColorScheme()}
+        aria-label="Toggle color scheme"
+        style={{
+          position: "absolute",
+          top: "1rem",
+          right: "1rem",
+          borderColor: t.border,
+          backgroundColor: t.surface,
+          boxShadow: t.isDark ? "0 2px 8px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.06)",
+        }}
+      >
+        {t.isDark ? <IconSun size={18} color="#FBBF24" /> : <IconMoon size={18} color={t.textSecondary} />}
+      </ActionIcon>
+
+      <Container size={420} w="100%">
         {/* Brand Header */}
         <Box ta="center" mb="xl">
-          <Group justify="center" gap="xs" mb="xs">
+          <Group justify="center" gap="xs" mb="sm">
             <Box
               style={{
-                backgroundColor: "#2563EB",
-                color: "white",
-                padding: "10px",
-                borderRadius: "12px",
+                backgroundColor: t.accent,
+                color: "#FFFFFF",
+                padding: "12px",
+                borderRadius: "14px",
                 display: "inline-flex",
-                boxShadow: "0 4px 14px rgba(37, 99, 235, 0.4)",
+                boxShadow: "0 8px 24px rgba(37, 99, 235, 0.4)",
               }}
             >
-              <IconTruckDelivery size={32} />
+              <IconTruckDelivery size={34} stroke={1.8} />
             </Box>
           </Group>
-          <Title order={1} c="white" fw={800} fz={{ base: 26, sm: 30 }} style={{ letterSpacing: "-0.5px" }}>
-            ChallanGo
+          <Title
+            order={1}
+            fw={800}
+            fz={{ base: 26, sm: 30 }}
+            c={t.textPrimary}
+            style={{ letterSpacing: "-0.5px" }}
+          >
+            WI - ChallanGo
           </Title>
-          <Text c="#94A3B8" size="sm" mt={4}>
+          <Text c={t.textSecondary} size="sm" mt={4} fw={500}>
             Challan Data Manager & Delivery Tracker
           </Text>
         </Box>
@@ -130,17 +164,20 @@ export const LoginPage: React.FC = () => {
         <Paper
           withBorder
           shadow="xl"
-          p={{ base: "lg", sm: "xl" }}
+          p={{ base: "xl", sm: 32 }}
           radius="lg"
           style={{
-            backgroundColor: "#FFFFFF",
-            borderColor: "#E2E8F0",
+            backgroundColor: t.surface,
+            borderColor: t.border,
+            boxShadow: t.isDark
+              ? "0 20px 40px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06)"
+              : "0 20px 40px -15px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.04)",
           }}
         >
-          <Title order={2} size="h3" fw={700} c="#0F172A" ta="center" mb="xs">
+          <Title order={2} size="h3" fw={700} c={t.textPrimary} ta="center" mb={6}>
             Welcome back
           </Title>
-          <Text c="#64748B" size="sm" ta="center" mb="lg">
+          <Text c={t.textSecondary} size="sm" ta="center" mb="xl">
             Enter your credentials to access delivery records
           </Text>
 
@@ -152,6 +189,12 @@ export const LoginPage: React.FC = () => {
               variant="light"
               mb="md"
               radius="md"
+              styles={{
+                root: {
+                  backgroundColor: t.isDark ? "rgba(220, 38, 38, 0.15)" : "#FEF2F2",
+                  borderColor: t.isDark ? "rgba(220, 38, 38, 0.3)" : "#FECACA",
+                },
+              }}
             >
               {serverError}
             </Alert>
@@ -163,7 +206,7 @@ export const LoginPage: React.FC = () => {
               placeholder="name@challango.in"
               required
               size="md"
-              leftSection={<IconMail size={18} color="#64748B" />}
+              leftSection={<IconMail size={18} color={t.textMuted} />}
               value={email}
               onChange={(e) => {
                 setEmail(e.currentTarget.value);
@@ -173,6 +216,19 @@ export const LoginPage: React.FC = () => {
               mb="md"
               autoComplete="email"
               disabled={isLoading}
+              styles={{
+                input: {
+                  backgroundColor: t.isDark ? "#1A1A1A" : "#FFFFFF",
+                  borderColor: t.border,
+                  color: t.textPrimary,
+                },
+                label: {
+                  color: t.textPrimary,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  marginBottom: 6,
+                },
+              }}
             />
 
             <PasswordInput
@@ -180,7 +236,7 @@ export const LoginPage: React.FC = () => {
               placeholder="••••••••"
               required
               size="md"
-              leftSection={<IconLock size={18} color="#64748B" />}
+              leftSection={<IconLock size={18} color={t.textMuted} />}
               value={password}
               onChange={(e) => {
                 setPassword(e.currentTarget.value);
@@ -190,6 +246,19 @@ export const LoginPage: React.FC = () => {
               mb="xl"
               autoComplete="current-password"
               disabled={isLoading}
+              styles={{
+                input: {
+                  backgroundColor: t.isDark ? "#1A1A1A" : "#FFFFFF",
+                  borderColor: t.border,
+                  color: t.textPrimary,
+                },
+                label: {
+                  color: t.textPrimary,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  marginBottom: 6,
+                },
+              }}
             />
 
             <Button
@@ -197,47 +266,24 @@ export const LoginPage: React.FC = () => {
               fullWidth
               size="md"
               radius="md"
-              color="blue"
               loading={isLoading}
               style={{
-                boxShadow: "0 4px 12px rgba(37, 99, 235, 0.3)",
+                backgroundColor: t.accent,
+                boxShadow: "0 4px 14px rgba(37, 99, 235, 0.35)",
+                fontWeight: 600,
+                height: 44,
               }}
             >
               Sign In
             </Button>
           </form>
 
-          <Divider my="lg" label="Quick Demo Fill" labelPosition="center" />
-
-          {/* Quick Demo Credentials for Evaluation */}
-          <Group justify="center" gap="xs">
-            <Button
-              variant="light"
-              color="blue"
-              size="xs"
-              radius="md"
-              onClick={() => handleFillCredentials("admin@challango.in", "Admin@123456")}
-              disabled={isLoading}
-            >
-              Admin Demo
-            </Button>
-            <Button
-              variant="light"
-              color="teal"
-              size="xs"
-              radius="md"
-              onClick={() => handleFillCredentials("staff@challango.in", "Staff@123456")}
-              disabled={isLoading}
-            >
-              Staff Demo
-            </Button>
-          </Group>
-
-          <Group justify="center" gap={6} mt="md">
-            <Text size="xs" c="#64748B">
-              Default password:
+          {/* Secure badge footer */}
+          <Group justify="center" gap={6} mt="xl" pt="xs">
+            <IconShieldLock size={14} color={t.textMuted} />
+            <Text size="xs" c={t.textMuted} fw={500}>
+              Encrypted & secure connection
             </Text>
-            <Badge size="xs" variant="outline" color="gray">Admin@123456</Badge>
           </Group>
         </Paper>
       </Container>

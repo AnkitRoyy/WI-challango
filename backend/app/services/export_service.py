@@ -10,13 +10,17 @@ from openpyxl.utils import get_column_letter
 from app.models.entry import Entry
 
 EXPORT_COLUMNS = [
-    "Serial No",
     "Challan No",
     "Vehicle No",
+    "Party",
     "Product",
     "Destination",
     "Quantity",
     "Unit Price",
+    "Subtotal",
+    "GST Type",
+    "GST Rate (%)",
+    "GST Amount",
     "Total Price",
     "Created At",
 ]
@@ -58,7 +62,7 @@ def generate_xlsx_export(entries: Iterable[Entry]) -> io.BytesIO:
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(
-            horizontal="center" if col_idx in (1, 9) else "left",
+            horizontal="center" if col_idx == 13 else "left",
             vertical="center"
         )
 
@@ -72,39 +76,67 @@ def generate_xlsx_export(entries: Iterable[Entry]) -> io.BytesIO:
 
         qty_val = float(entry.quantity)
         unit_price_val = float(entry.unit_price)
+        subtotal_val = float(entry.subtotal) if entry.subtotal is not None else float(entry.quantity * entry.unit_price)
+        gst_type_val = (entry.gst_type or "none").upper()
+        gst_rate_val = float(entry.gst_rate) if entry.gst_rate is not None else 0.0
+        gst_amount_val = float(entry.gst_amount) if entry.gst_amount is not None else 0.0
         total_price_val = float(entry.total_price)
 
         row_values = [
-            sanitize_formula_injection(entry.serial_no),
             sanitize_formula_injection(entry.challan_no),
             sanitize_formula_injection(entry.vehicle_no),
+            sanitize_formula_injection(entry.party_name or ""),
             sanitize_formula_injection(entry.product),
             sanitize_formula_injection(entry.destination),
             qty_val,
             unit_price_val,
+            subtotal_val,
+            gst_type_val,
+            gst_rate_val if entry.gst_rate is not None else "",
+            gst_amount_val,
             total_price_val,
             created_str,
         ]
         ws.append(row_values)
 
         # Apply specific numeric formatting
-        # Quantity
+        # Quantity (col 6)
         qty_cell = ws.cell(row=row_idx, column=6)
         qty_cell.number_format = "#,##0.00" if (entry.quantity % 1 != 0) else "#,##0"
         qty_cell.alignment = Alignment(horizontal="right")
 
-        # Unit Price (2 decimals)
+        # Unit Price (col 7)
         unit_price_cell = ws.cell(row=row_idx, column=7)
         unit_price_cell.number_format = "#,##0.00"
         unit_price_cell.alignment = Alignment(horizontal="right")
 
-        # Total Price (2 decimals)
-        total_price_cell = ws.cell(row=row_idx, column=8)
+        # Subtotal (col 8)
+        subtotal_cell = ws.cell(row=row_idx, column=8)
+        subtotal_cell.number_format = "#,##0.00"
+        subtotal_cell.alignment = Alignment(horizontal="right")
+
+        # GST Type (col 9)
+        gst_type_cell = ws.cell(row=row_idx, column=9)
+        gst_type_cell.alignment = Alignment(horizontal="center")
+
+        # GST Rate (col 10)
+        gst_rate_cell = ws.cell(row=row_idx, column=10)
+        if entry.gst_rate is not None:
+            gst_rate_cell.number_format = "0.00"
+            gst_rate_cell.alignment = Alignment(horizontal="right")
+
+        # GST Amount (col 11)
+        gst_amount_cell = ws.cell(row=row_idx, column=11)
+        gst_amount_cell.number_format = "#,##0.00"
+        gst_amount_cell.alignment = Alignment(horizontal="right")
+
+        # Total Price (col 12)
+        total_price_cell = ws.cell(row=row_idx, column=12)
         total_price_cell.number_format = "#,##0.00"
         total_price_cell.alignment = Alignment(horizontal="right")
 
-        # Created At alignment
-        date_cell = ws.cell(row=row_idx, column=9)
+        # Created At alignment (col 13)
+        date_cell = ws.cell(row=row_idx, column=13)
         date_cell.alignment = Alignment(horizontal="center")
 
         # Track maximum length for auto column widths
@@ -144,15 +176,22 @@ def generate_csv_export(entries: Iterable[Entry]) -> io.BytesIO:
     for entry in entries:
         created_str = entry.created_at.strftime("%d/%m/%Y") if entry.created_at else ""
         qty_str = f"{entry.quantity:.2f}" if (entry.quantity % 1 != 0) else f"{entry.quantity:.0f}"
+        subtotal_val = entry.subtotal if entry.subtotal is not None else (entry.quantity * entry.unit_price)
+        gst_rate_str = f"{entry.gst_rate:.2f}" if entry.gst_rate is not None else ""
+        gst_amount_val = entry.gst_amount if entry.gst_amount is not None else 0.0
 
         row = [
-            sanitize_formula_injection(entry.serial_no),
             sanitize_formula_injection(entry.challan_no),
             sanitize_formula_injection(entry.vehicle_no),
+            sanitize_formula_injection(entry.party_name or ""),
             sanitize_formula_injection(entry.product),
             sanitize_formula_injection(entry.destination),
             qty_str,
             f"{entry.unit_price:.2f}",
+            f"{subtotal_val:.2f}",
+            (entry.gst_type or "none").upper(),
+            gst_rate_str,
+            f"{gst_amount_val:.2f}",
             f"{entry.total_price:.2f}",
             created_str,
         ]

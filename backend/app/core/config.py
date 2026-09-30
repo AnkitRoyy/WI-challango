@@ -10,7 +10,7 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    PROJECT_NAME: str = "Challan Data Manager"
+    PROJECT_NAME: str = "WI - ChallanGo"
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = "development"
 
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5434
     POSTGRES_DB: str = "challan_db"
     DATABASE_URL: str | None = None
+    GSTINAPI_KEY: str | None = None
 
     @computed_field
     def sync_database_url(self) -> str:

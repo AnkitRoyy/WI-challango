@@ -159,6 +159,9 @@ html, body {
 }
 
 /* Select / Autocomplete dropdown */
+.mantine-Combobox-dropdown {
+  z-index: 1000 !important;
+}
 [data-mantine-color-scheme="dark"] .mantine-Combobox-dropdown {
   background-color: var(--c-surface-raised) !important;
   border-color: var(--c-border-strong) !important;
@@ -216,3 +219,97 @@ html, body {
   background-color: var(--c-surface-raised) !important;
   border-color: var(--c-border) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   CHALLAN PRINT STYLING (FULL PAGE A4 & 80mm THERMAL)
+   ═══════════════════════════════════════════════════════════ */
+
+/* Hidden on normal screen view */
+#challan-print-portal {
+  display: none;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 15mm;
+}
+
+@media print {
+  /* Hide EVERYTHING on body except the dedicated challan print portal */
+  body > *:not(#challan-print-portal) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Explicitly hide all notification toasts, modals, tooltips, and portals */
+  #root,
+  .mantine-Notifications-root,
+  .mantine-Notification-root,
+  .mantine-Modal-root,
+  .mantine-Overlay-root,
+  .mantine-Portal-root,
+  [class*="mantine-Notifications"],
+  [class*="mantine-Notification"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Show only the print portal, starting at the very top of Page 1 */
+  #challan-print-portal {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* ── FULL PAGE MODE (Default: A4 / Standard Paper) ── */
+  #challan-print-portal.mode-full {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 8mm 10mm !important;
+    box-sizing: border-box !important;
+  }
+
+  #challan-print-portal.mode-full .challan-printable-slip {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* ── THERMAL ROLL MODE (80mm / Epson TM-P80) ── */
+  #challan-print-portal.mode-thermal {
+    width: 78mm !important;
+    max-width: 78mm !important;
+  }
+
+  #challan-print-portal.mode-thermal .challan-printable-slip {
+    width: 78mm !important;
+    max-width: 78mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+}
+
+
+

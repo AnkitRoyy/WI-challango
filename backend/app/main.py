@@ -15,6 +15,9 @@ from app.api.v1.audit_logs import router as audit_logs_router
 from app.api.v1.products import router as products_router
 from app.api.v1.places import router as places_router
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.parties import router as parties_router
+from app.api.v1.gst import router as gst_router
+from app.api.v1.settings import router as settings_router
 
 # Configure structured logging
 logging.basicConfig(
@@ -55,6 +58,8 @@ async def add_process_time_and_logging_header(request: Request, call_next):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code >= 400:
+        logger.warning(f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -96,6 +101,9 @@ app.include_router(audit_logs_router, prefix=settings.API_V1_STR)
 app.include_router(products_router, prefix=settings.API_V1_STR)
 app.include_router(places_router, prefix=settings.API_V1_STR)
 app.include_router(analytics_router, prefix=settings.API_V1_STR)
+app.include_router(parties_router, prefix=settings.API_V1_STR)
+app.include_router(gst_router, prefix=settings.API_V1_STR)
+app.include_router(settings_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

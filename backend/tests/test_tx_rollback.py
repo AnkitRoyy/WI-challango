@@ -25,7 +25,6 @@ def test_commit_transactional_rollback_on_failure(client, staff_headers, db):
             {
                 "status": "ok",
                 "data": {
-                    "serial_no": "001",
                     "challan_no": challan,
                     "vehicle_no": "DL01AB1111",
                     "product": "Product First That Must Rollback",
@@ -38,7 +37,6 @@ def test_commit_transactional_rollback_on_failure(client, staff_headers, db):
             {
                 "status": "ok",
                 "data": {
-                    "serial_no": "002",
                     "challan_no": challan,
                     "vehicle_no": "DL01AB1111",
                     "product": "Product Second Causing Collision",
@@ -54,13 +52,12 @@ def test_commit_transactional_rollback_on_failure(client, staff_headers, db):
     db.add(preview)
     db.commit()
 
-    # 2. Before commit runs, simulate a concurrent insertion of serial_no '002'
-    # so that when commit runs, row 2 hits the unique constraint uq_challan_serial_active
+    # 2. Before commit runs, simulate a concurrent insertion of 'Product Second Causing Collision'
+    # so that when commit runs, row 2 hits the unique constraint uq_challan_product_active
     conflicting_entry = Entry(
-        serial_no="002",
         challan_no=challan,
         vehicle_no="DL01AB1111",
-        product="Pre-existing Conflicting Entry",
+        product="Product Second Causing Collision",
         destination="Delhi NCR",
         quantity="5.00",
         unit_price="50.00",
@@ -79,11 +76,11 @@ def test_commit_transactional_rollback_on_failure(client, staff_headers, db):
     assert commit_resp.status_code == 500
     assert "Import transaction failed" in commit_resp.json()["detail"]
 
-    # 4. Verify that row 001 was ROLLED BACK and NOT committed to DB!
+    # 4. Verify that row 1 was ROLLED BACK and NOT committed to DB!
     db.expire_all()
     inserted_first_row = (
         db.query(Entry)
-        .filter(Entry.challan_no == challan, Entry.serial_no == "001")
+        .filter(Entry.challan_no == challan, Entry.product == "Product First That Must Rollback")
         .first()
     )
     assert inserted_first_row is None  # Confirms atomic rollback!
